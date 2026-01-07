@@ -5,13 +5,20 @@
 # pyright: strict
 
 import argparse
+import os
 import subprocess
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Sequence
+from contextlib import chdir
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from functools import cache
 from graphlib import TopologicalSorter
+from pathlib import Path
+
+
+def cmd(*args: str):
+    return subprocess.run(args, check=True)
 
 
 def cmd_stdout_str(*args: str) -> str:
@@ -68,21 +75,31 @@ def build_task_lists(
         ts.done(*ready)
 
 
+def task_terraform():
+    with chdir("terraform"):
+        cmd("./init.sh")
+        cmd("tofu", "apply", "-auto-approve")
+
+
+def task_helm():
+    pass
+
+
 def yield_tasks(diff_fnames: Collection[str]) -> Iterable[tuple[str, Task]]:
-    print(diff_fnames)
     fnm = cache(fnmatch)
 
     def any_globs(*pats: str):
         return any(fnm(fname, pat) for pat in pats for fname in diff_fnames)
 
-    yield ("root_a", Task(lambda: print("a"), [], any_globs("a")))
-    yield ("dep_of_a", Task(lambda: print("dep"), ["root_a"]))
+    yield ("terraform", Task(task_terraform, [], any_globs("terraform/*")))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("diff_from")
     parsed = parser.parse_args()
+
+    os.chdir(Path(__file__).parent)
 
     for tasks in build_task_lists(yield_tasks(set(get_diff_fnames(parsed.diff_from)))):
         for k, fn in tasks:
