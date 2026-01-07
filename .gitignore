@@ -1,0 +1,4 @@
+*.local
+
+/terraform*/.terraform
+/terraform*/*.tfstate*

@@ -19,12 +19,8 @@ def cmd_stdout_str(*args: str) -> str:
 
 
 def get_diff_fnames(diff_from: str) -> Iterable[str]:
-    if diff_from == "test":
-        yield "a"
-        yield "b"
-        yield "c/d"
-    elif diff_from == "git":
-        yield from cmd_stdout_str("git", "diff", "--name-only").splitlines()
+    if diff_from == "git":
+        yield from cmd_stdout_str("git", "diff", "--name-only", "HEAD").splitlines()
     elif diff_from.startswith("git:"):
         refs = diff_from.removeprefix("git:").split(",")
         assert len(refs) == 2
@@ -73,6 +69,7 @@ def build_task_lists(
 
 
 def yield_tasks(diff_fnames: Collection[str]) -> Iterable[tuple[str, Task]]:
+    print(diff_fnames)
     fnm = cache(fnmatch)
 
     def any_globs(*pats: str):
