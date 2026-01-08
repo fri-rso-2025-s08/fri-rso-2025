@@ -25,6 +25,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b
+        with:
+          enable-cache: false
 
       - name: Install OpenTofu
         uses: opentofu/setup-opentofu@e95ccdd20623115bfd7d47df14a3250d6066a9d0
