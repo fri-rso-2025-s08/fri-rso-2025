@@ -23,7 +23,9 @@ def cmd(*args: str):
 
 
 def cmd_stdout_str(*args: str) -> str:
-    return subprocess.run(args, capture_output=True, check=True).stdout.decode("utf-8")
+    return subprocess.run(args, stdout=subprocess.PIPE, check=True).stdout.decode(
+        "utf-8"
+    )
 
 
 def get_diff_fnames(diff_from: str) -> Iterable[str]:
