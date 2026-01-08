@@ -10,10 +10,11 @@ import subprocess
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Sequence
 from contextlib import chdir
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from functools import cache
 from graphlib import TopologicalSorter
+from itertools import chain
 from pathlib import Path
 
 
@@ -33,33 +34,50 @@ def get_diff_fnames(diff_from: str) -> Iterable[str]:
         assert len(refs) == 2
         assert all(len(ref) > 0 for ref in refs)
         yield from cmd_stdout_str("git", "diff", "--name-only", *refs).splitlines()
+    elif diff_from.startswith("glob:"):
+        globs = diff_from.removeprefix("glob:").split(",")
+        assert len(globs) > 0
+        for glob in globs:
+            for p in Path().glob(glob):
+                yield str(p)
     else:
         raise ValueError("invalid diff source specification")
 
 
 @dataclass
 class Task:
+    name: str
     fn: Callable[[], None]
-    dependencies: Collection[str] = ()
-    autorun: bool = False
+    wants: Collection[str] = field(default=(), kw_only=True)
+    requires: Collection[str] = field(default=(), kw_only=True)
+    autorun: bool = field(default=False, kw_only=True)
 
 
 def build_task_lists(
-    tasks: Iterable[tuple[str, Task]],
+    tasks: Iterable[Task],
 ) -> Iterable[Sequence[tuple[str, Callable[[], None]]]]:
-    g_full = dict(tasks)
+    g_full = {v.name: v for v in tasks}
     g_inv = defaultdict[str, set[str]](set)
 
     for k, v in g_full.items():
-        for dep in v.dependencies:
-            g_inv[dep].add(k)
+        for k_u in v.wants:
+            g_inv[k_u].add(k)
+        for k_u in v.requires:
+            g_inv[k_u].add(k)
 
     autorun_or_propagated = set[str]()
+
+    def add_k_deps(k: str):
+        if k in autorun_or_propagated:
+            return
+        autorun_or_propagated.add(k)
+        for k_u in g_full[k].requires:
+            add_k_deps(k_u)
 
     def add_k(k: str):
         if k in autorun_or_propagated:
             return
-        autorun_or_propagated.add(k)
+        add_k_deps(k)
         for rdep in g_inv[k]:
             add_k(rdep)
 
@@ -67,12 +85,25 @@ def build_task_lists(
         if v.autorun:
             add_k(k)
 
-    ts = TopologicalSorter({k: g_full[k].dependencies for k in autorun_or_propagated})
+    ts = TopologicalSorter(
+        {
+            k: {
+                k_u
+                for k_u in chain(g_full[k].wants, g_full[k].requires)
+                if k_u in autorun_or_propagated
+            }
+            for k in autorun_or_propagated
+        }
+    )
     ts.prepare()
     while ts.is_active():
         ready = ts.get_ready()
         yield [(k, g_full[k].fn) for k in ready]
         ts.done(*ready)
+
+
+def task_noop():
+    print("--skip-azure passed, not running this step")
 
 
 def task_terraform():
@@ -85,26 +116,38 @@ def task_helm():
     pass
 
 
-def yield_tasks(diff_fnames: Collection[str]) -> Iterable[tuple[str, Task]]:
+def yield_tasks(diff_fnames: Collection[str], *, skip_azure: bool) -> Iterable[Task]:
     fnm = cache(fnmatch)
 
     def any_globs(*pats: str):
         return any(fnm(fname, pat) for pat in pats for fname in diff_fnames)
 
-    yield ("terraform", Task(task_terraform, [], any_globs("terraform/*")))
+    yield Task(
+        "terraform",
+        task_noop if skip_azure else task_terraform,
+        autorun=any_globs("terraform/*"),
+    )
 
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--dry-run", action="store_true")
+    parser.add_argument("--skip-azure", action="store_true")
     parser.add_argument("diff_from")
     parsed = parser.parse_args()
 
     os.chdir(Path(__file__).parent)
 
-    for tasks in build_task_lists(yield_tasks(set(get_diff_fnames(parsed.diff_from)))):
+    for tasks in build_task_lists(
+        yield_tasks(
+            set(get_diff_fnames(parsed.diff_from)),
+            skip_azure=parsed.skip_azure,
+        )
+    ):
         for k, fn in tasks:
             print(f"### Running task: {k} ###")
-            fn()
+            if not parsed.dry_run:
+                fn()
 
 
 if __name__ == "__main__":

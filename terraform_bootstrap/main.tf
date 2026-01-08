@@ -11,17 +11,9 @@ provider "azurerm" {
   features {}
 }
 
-variable "location" {
-  type = string
-}
-
-variable "resource_group_name" {
-  type = string
-}
-
-variable "storage_account_name" {
-  type = string
-}
+variable "location" { type = string }
+variable "resource_group_name" { type = string }
+variable "storage_account_name" { type = string }
 
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
