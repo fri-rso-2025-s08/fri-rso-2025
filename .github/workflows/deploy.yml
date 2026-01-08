@@ -42,4 +42,5 @@ jobs:
         #   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
         #   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
         run: |
-          ./ci.py --skip-azure git:${{ github.event.before }},${{ github.event.after }}
+          # Add -e prod to make this work (if azure auth is working)
+          ./ci.py git:${{ github.event.before }},${{ github.event.after }}

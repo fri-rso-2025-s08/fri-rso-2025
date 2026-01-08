@@ -1,4 +1,6 @@
 *.local
 
-/terraform*/.terraform
-/terraform*/*.tfstate*
+/terraform/**/.terraform
+/terraform/**/*.tfstate*
+
+/current_registry
