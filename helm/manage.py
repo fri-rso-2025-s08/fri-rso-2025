@@ -6,7 +6,7 @@
 #     "pyyaml>=6.0.3",
 # ]
 # ///
-# pyright: strict, reportUnknownLambdaType = false, reportUnknownVariableType = false
+# pyright: strict, reportUnknownArgumentType = false, reportUnknownLambdaType = false, reportUnknownVariableType = false
 
 
 import json
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from io import BufferedWriter
 from pathlib import Path
 from threading import Thread
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 import yaml
 from pydantic import BaseModel, BeforeValidator
@@ -100,7 +100,7 @@ class HelmRelease:
 
 
 def update_release(release: HelmRelease, ns_prefix: str, *, dry_run: bool = False):
-    print(f"Updating {ns_prefix}{release.ns}.{release.release} ({release.chart})")
+    print(f"Upgrading {ns_prefix}{release.ns}.{release.release} ({release.chart})")
 
     with with_helm_values(release.values) as (values_args, values_fds):
         args = [
@@ -179,16 +179,18 @@ def apply(
     dry_run: bool = False,
 ):
     desired_releases = defaultdict[str, dict[str, HelmRelease]](dict)
-    for release in releases:
-        desired_releases[ns_prefix + release.ns][release.release] = release
+    releases_list = list(releases)
+    for release in releases_list:
+        ns_releases = desired_releases[ns_prefix + release.ns]
+        assert release.release not in ns_releases
+        ns_releases[release.release] = release
 
-    for ns_releases in desired_releases.values():
-        for release in ns_releases.values():
-            if filter:
-                fullrelease = f"{ns_prefix}{release.ns}.{release.release}"
-                if not any(pat in fullrelease for pat in filter):
-                    continue
-            update_release(release, ns_prefix, dry_run=dry_run)
+    for release in releases_list:
+        if filter:
+            fullrelease = f"{ns_prefix}{release.ns}.{release.release}"
+            if not any(pat in fullrelease for pat in filter):
+                continue
+        update_release(release, ns_prefix, dry_run=dry_run)
 
     if not uninstall_dangling:
         return
@@ -260,30 +262,14 @@ class EnvConfig(BaseModel):
     authentik_host: MaybeEnvString
     authentik_secret: MaybeEnvString
     authentik_postgres_password: MaybeEnvString
+    letsencrypt_mode: Annotated[Literal["staging", "prod"], MaybeEnvString]
 
     model_config = {"extra": "forbid"}
 
 
 def yield_releases(env: Env) -> Iterable[HelmRelease]:
-    p_shared = Path("config_shared")
+    p_shared = Path("values_shared")
     c = env.config
-
-    yield HelmRelease(
-        "global",
-        "charts/authentik.tgz",
-        "authentik",
-        [
-            p_shared / "authentik.yaml",
-            {
-                "authentik": {
-                    "secret_key": c.authentik_secret,
-                    "postgresql": {"password": c.authentik_postgres_password},
-                },
-                "postgresql": {"auth": {"password": c.authentik_postgres_password}},
-                "server": {"ingress": {"hosts": [c.authentik_host]}},
-            },
-        ],
-    )
 
     yield HelmRelease(
         "ingress-nginx",
@@ -302,6 +288,45 @@ def yield_releases(env: Env) -> Iterable[HelmRelease]:
             }
             if c.load_balancer_dns_label is not None
             else None,
+        ],
+    )
+
+    yield HelmRelease(
+        "cert-manager",
+        "charts/cert-manager.tgz",
+        "cert-manager",
+        [p_shared / "cert-manager.yaml"],
+    )
+
+    yield HelmRelease("global", "charts/cert-manager-issuer", "letsencrypt", [])
+
+    yield HelmRelease(
+        "global",
+        "charts/authentik.tgz",
+        "authentik",
+        [
+            p_shared / "authentik.yaml",
+            {
+                "authentik": {
+                    "secret_key": c.authentik_secret,
+                    "postgresql": {"password": c.authentik_postgres_password},
+                },
+                "postgresql": {"auth": {"password": c.authentik_postgres_password}},
+                "server": {
+                    "ingress": {
+                        "annotations": {
+                            "cert-manager.io/cluster-issuer": f"{c.namespace_prefix}-global-letsencrypt-letsencrypt-{c.letsencrypt_mode}"
+                        },
+                        "hosts": [c.authentik_host],
+                        "tls": [
+                            {
+                                "hosts": [c.authentik_host],
+                                "secretName": "authentik-tls",
+                            }
+                        ],
+                    }
+                },
+            },
         ],
     )
 

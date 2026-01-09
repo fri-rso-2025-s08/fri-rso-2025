@@ -7,3 +7,4 @@ authentik_secret:
   _env: VT_META_AUTHENTIK_SECRET
 authentik_postgres_password:
   _env: VT_META_AUTHENTIK_POSTGRES_PASSWORD
+letsencrypt_mode: prod

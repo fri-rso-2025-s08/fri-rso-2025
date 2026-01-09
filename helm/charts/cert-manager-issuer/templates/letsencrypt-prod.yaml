@@ -1,14 +1,14 @@
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: letsencrypt-prod
+  name: {{ .Release.Namespace }}-{{ .Release.Name }}-letsencrypt-prod
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@example.com
+    profile: tlsserver
     privateKeySecretRef:
-      name: letsencrypt-prod
+      name: {{ .Release.Name }}-letsencrypt-prod
     solvers:
       - http01:
           ingress:
-            class: nginx
+            ingressClassName: nginx

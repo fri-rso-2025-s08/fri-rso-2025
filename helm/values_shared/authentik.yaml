@@ -7,9 +7,15 @@ authentik:
 
 server:
   ingress:
-    ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: null # Computed
     enabled: true
     hosts: null # VT_META_AUTHENTIK_HOST
+    tls:
+      - hosts:
+          - null # VT_META_AUTHENTIK_HOST
+        secretName: null # Computed
+    ingressClassName: nginx
 
 postgresql:
   enabled: true
