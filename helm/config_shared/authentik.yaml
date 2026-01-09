@@ -1,0 +1,17 @@
+authentik:
+  secret_key: null # VT_META_AUTHENTIK_SECRET
+  error_reporting:
+    enabled: false
+  postgresql:
+    password: null # VT_META_AUTHENTIK_POSTGRES_PASSWORD
+
+server:
+  ingress:
+    ingressClassName: nginx
+    enabled: true
+    hosts: null # VT_META_AUTHENTIK_HOST
+
+postgresql:
+  enabled: true
+  auth:
+    password: null # VT_META_AUTHENTIK_POSTGRES_PASSWORD

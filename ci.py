@@ -4,9 +4,10 @@
 # ///
 # pyright: strict
 
-import argparse
+
 import os
 import subprocess
+from argparse import ArgumentParser
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Sequence
 from contextlib import chdir
@@ -72,23 +73,29 @@ def build_task_lists(
 
     autorun_or_propagated = set[str]()
 
-    def add_k_deps(k: str):
-        if k in autorun_or_propagated:
-            return
-        autorun_or_propagated.add(k)
-        for k_u in g_full[k].requires:
-            add_k_deps(k_u)
-
     def add_k(k: str):
         if k in autorun_or_propagated:
             return
-        add_k_deps(k)
+        autorun_or_propagated.add(k)
         for rdep in g_inv[k]:
             add_k(rdep)
 
     for k, v in g_full.items():
         if v.autorun:
             add_k(k)
+
+    to_run = set[str]()
+
+    def add_k_deps(k: str):
+        if k in to_run:
+            return
+        to_run.add(k)
+        autorun_or_propagated.add(k)
+        for k_u in g_full[k].requires:
+            add_k_deps(k_u)
+
+    for k in list(autorun_or_propagated):
+        add_k_deps(k)
 
     ts = TopologicalSorter(
         {
@@ -99,7 +106,7 @@ def build_task_lists(
     ts.prepare()
     while ts.is_active():
         ready = ts.get_ready()
-        to_yield = [(k, g_full[k].fn) for k in ready if k in autorun_or_propagated]
+        to_yield = [(k, g_full[k].fn) for k in ready if k in to_run]
         if to_yield:
             yield to_yield
         ts.done(*ready)
@@ -120,8 +127,40 @@ def task_terraform_login(env: str):
         cmd("./login.sh", env)
 
 
-def task_helm():
-    pass
+def task_helm(env: str):
+    with chdir("helm"):
+        cmd("./manage.py", "-e", env, "apply", "-u")
+
+
+def main():
+    parser = ArgumentParser()
+    parser.add_argument("-d", "--dry-run", action="store_true")
+    parser.add_argument("-e", "--env")
+    parser.add_argument("diff_from")
+    parsed = parser.parse_args()
+
+    os.chdir(Path(__file__).parent)
+
+    for tasks in build_task_lists(
+        yield_tasks(
+            set(get_diff_fnames(parsed.diff_from)),
+            env=parsed.env,
+        )
+    ):
+        for k, fn in tasks:
+            if fn is None:
+                print(f"### Skipping task: {k} ###")
+            else:
+                print(f"### Running task: {k} ###")
+                if not parsed.dry_run:
+                    fn()
+
+
+##################
+### ^^ CODE ^^ ###
+##################
+###   CONFIG   ###
+##################
 
 
 def yield_tasks(diff_fnames: Collection[str], *, env: str | None) -> Iterable[Task]:
@@ -154,30 +193,12 @@ def yield_tasks(diff_fnames: Collection[str], *, env: str | None) -> Iterable[Ta
         after=["terraform_apply"],
         requires=["terraform_init"],
     )
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--dry-run", action="store_true")
-    parser.add_argument("-e", "--env")
-    parser.add_argument("diff_from")
-    parsed = parser.parse_args()
-
-    os.chdir(Path(__file__).parent)
-
-    for tasks in build_task_lists(
-        yield_tasks(
-            set(get_diff_fnames(parsed.diff_from)),
-            env=parsed.env,
-        )
-    ):
-        for k, fn in tasks:
-            if fn is None:
-                print(f"### Skipping task: {k} ###")
-            else:
-                print(f"### Running task: {k} ###")
-                if not parsed.dry_run:
-                    fn()
+    yield Task(
+        "helm_release",
+        with_env(task_helm),
+        requires=["terraform_login"],
+        autorun=any_globs("helm/*"),
+    )
 
 
 if __name__ == "__main__":

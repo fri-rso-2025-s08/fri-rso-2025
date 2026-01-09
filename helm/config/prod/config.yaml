@@ -1,0 +1,9 @@
+namespace_prefix: vt
+load_balancer_dns_label:
+  _env: VT_META_LOAD_BALANCER_DNS_LABEL
+authentik_host:
+  _env: VT_META_AUTHENTIK_HOST
+authentik_secret:
+  _env: VT_META_AUTHENTIK_SECRET
+authentik_postgres_password:
+  _env: VT_META_AUTHENTIK_POSTGRES_PASSWORD
