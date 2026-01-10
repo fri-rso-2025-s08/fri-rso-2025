@@ -7,6 +7,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi_problem.handler import add_exception_handler
 
+from vehicle_manager import crud
 from vehicle_manager.db.core import DatabaseSessionManager
 from vehicle_manager.errors import eh
 from vehicle_manager.settings import Settings
@@ -40,6 +41,8 @@ def make_app(*, settings: Settings | None = None) -> FastAPI:
             app.state.settings = settings
             app.state.db_session_manager = dsm
             add_exception_handler(app, eh)
+
+            app.include_router(crud.router)
 
             yield
 
