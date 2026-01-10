@@ -1,0 +1,10 @@
+Dockerfile
+.dockerignore
+.gitignore
+README.md
+.vscode
+.venv
+*.pyc
+__pycache__
+.env*
+test.sh
