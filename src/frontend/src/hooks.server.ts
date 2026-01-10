@@ -28,15 +28,14 @@ async function startAuthFlow(event: RequestEvent) {
     event.cookies.set("oauth_verifier", code_verifier, cookieOpts);
     event.cookies.set("oauth_state", state, cookieOpts);
 
-    const parameters: Record<string, string> = {
+    const url = buildAuthorizationUrl(config, {
         redirect_uri: OAUTH_REDIRECT_URI,
         scope: "openid profile email offline_access",
+        prompt: "select_account",
         code_challenge,
         code_challenge_method: "S256",
         state
-    };
-
-    const url = buildAuthorizationUrl(config, parameters);
+    });
 
     return redirect(302, url.href);
 }
@@ -90,7 +89,11 @@ export const handle = async ({ event, resolve }) => {
         }
     }
 
-    event.locals.tokens = { access: session.accessToken, id: session.idToken };
+    event.locals.user = {
+        accessToken: session.accessToken,
+        idToken: session.idToken
+    };
+    // const claims = decodeJwt(session.idToken);
 
     return resolve(event);
 };

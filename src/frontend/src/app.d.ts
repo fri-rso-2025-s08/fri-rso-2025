@@ -3,7 +3,10 @@
 declare global {
     namespace App {
         interface Locals {
-            tokens: { access: string; id: string } | undefined;
+            user: {
+                accessToken: string;
+                idToken: string;
+            };
         }
 
         // interface Error {}

@@ -29,7 +29,7 @@
 
     <Counter />
 
-    <div>{JSON.stringify(data)}</div>
+    <pre>{JSON.stringify(data, undefined, 4)}</pre>
 </section>
 
 <style>
