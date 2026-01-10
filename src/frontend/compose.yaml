@@ -1,14 +1,6 @@
 services:
-    db:
-        image: postgres
-        restart: always
+    redis:
+        image: redis:alpine
         ports:
-            - 5432:5432
-        environment:
-            POSTGRES_USER: root
-            POSTGRES_PASSWORD: mysecretpassword
-            POSTGRES_DB: local
-        volumes:
-            - pgdata:/var/lib/postgresql
-volumes:
-    pgdata:
+            - 6379:6379
+        command: redis-server --loglevel warning --requirepass tZGBSb9VlOtDcDMxkNPF

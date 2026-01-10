@@ -1,28 +1,96 @@
-import * as auth from "$lib/server/auth";
-import type { Handle } from "@sveltejs/kit";
+import { getOAuthConfig, OAUTH_REDIRECT_URI } from "$lib/server/oauth";
+import { getRedis, SessionJson } from "$lib/server/redis";
+import { redirect, type RequestEvent } from "@sveltejs/kit";
+import {
+    buildAuthorizationUrl,
+    calculatePKCECodeChallenge,
+    randomPKCECodeVerifier,
+    randomState,
+    refreshTokenGrant
+} from "openid-client";
 
-const handleAuth: Handle = async ({ event, resolve }) => {
-    const sessionToken = event.cookies.get(auth.sessionCookieName);
+async function startAuthFlow(event: RequestEvent) {
+    const config = await getOAuthConfig();
 
-    if (!sessionToken) {
-        event.locals.user = null;
-        event.locals.session = null;
+    const code_verifier = randomPKCECodeVerifier();
+    const code_challenge = await calculatePKCECodeChallenge(code_verifier);
+    const state = randomState();
 
+    const cookieOpts = {
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+        secure: import.meta.env.PROD,
+        maxAge: 600
+    } as const;
+
+    event.cookies.set("oauth_target_url", event.url.pathname + event.url.search, cookieOpts);
+    event.cookies.set("oauth_verifier", code_verifier, cookieOpts);
+    event.cookies.set("oauth_state", state, cookieOpts);
+
+    const parameters: Record<string, string> = {
+        redirect_uri: OAUTH_REDIRECT_URI,
+        scope: "openid profile email offline_access",
+        code_challenge,
+        code_challenge_method: "S256",
+        state
+    };
+
+    const url = buildAuthorizationUrl(config, parameters);
+
+    return redirect(302, url.href);
+}
+
+export const handle = async ({ event, resolve }) => {
+    if (event.url.pathname === "/auth/callback") {
         return resolve(event);
     }
 
-    const { session, user } = await auth.validateSessionToken(sessionToken);
+    const sessionId = event.cookies.get("session_id");
 
-    if (session) {
-        auth.setSessionTokenCookie(event, sessionToken, session.expiresAt);
-    } else {
-        auth.deleteSessionTokenCookie(event);
+    if (!sessionId) {
+        throw await startAuthFlow(event);
     }
 
-    event.locals.user = user;
-    event.locals.session = session;
+    const redis = await getRedis();
+    const rawSession = SessionJson.safeParse(await redis.get(`session:${sessionId}`));
+
+    if (!rawSession.success) {
+        event.cookies.delete("session_id", { path: "/" });
+        throw await startAuthFlow(event);
+    }
+
+    const session = rawSession.data;
+
+    if (new Date() > session.expiresAt) {
+        if (!session.refreshToken) {
+            await redis.del(`session:${sessionId}`);
+            event.cookies.delete("session_id", { path: "/" });
+            throw await startAuthFlow(event);
+        }
+
+        try {
+            const config = await getOAuthConfig();
+            const response = await refreshTokenGrant(config, session.refreshToken);
+
+            await redis.set(
+                `session:${sessionId}`,
+                SessionJson.encode({
+                    accessToken: response.access_token,
+                    refreshToken: response.refresh_token ?? session.refreshToken,
+                    idToken: response.id_token ?? session.idToken,
+                    expiresAt: new Date(Date.now() + (response.expires_in || 3600) * 1000)
+                }),
+                { expiration: { type: "EX", value: 60 * 60 * 24 * 30 } }
+            );
+        } catch (error) {
+            await redis.del(`session:${sessionId}`);
+            event.cookies.delete("session_id", { path: "/" });
+            throw await startAuthFlow(event);
+        }
+    }
+
+    event.locals.tokens = { access: session.accessToken, id: session.idToken };
 
     return resolve(event);
 };
-
-export const handle: Handle = handleAuth;
