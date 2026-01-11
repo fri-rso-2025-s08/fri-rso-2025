@@ -127,6 +127,42 @@ def task_terraform_login(env: str):
         cmd("./login.sh", env)
 
 
+def task_test(p: Path):
+    with chdir(p):
+        cmd("./test.sh")
+
+
+def get_docker_cmd() -> str:
+    if "DOCKER_COMMAND" in os.environ:
+        return os.environ["DOCKER_COMMAND"]
+    return "docker"
+
+
+def task_build_and_push(env: str, p: Path):
+    docker = get_docker_cmd()
+    registry = Path("current_registry").read_text().strip()
+    tag_base = f"{registry}/{p.name}"
+    tag = f"{tag_base}:latest"
+    with chdir(p):
+        cmd(docker, "build", "-t", tag, ".")
+        cmd(docker, "push", tag)
+        sha256 = (
+            cmd_stdout_str(docker, "inspect", "--format={{index .RepoDigests 0}}", tag)
+            .strip()
+            .split("@")[-1]
+        )
+    (p / "latest_tag").write_text(f"{tag_base}:{sha256}\n")
+
+
+def task_maybe_commit():
+    try:
+        cmd("git", "diff", "--cached", "--quiet")
+    except Exception:
+        return
+    cmd("git", "add", "src/*/latest_tag")
+    cmd("git", "commit", "-m", "[automatic] update image tags")
+
+
 def task_helm(env: str):
     with chdir("helm"):
         cmd("./manage.py", "-e", env, "apply", "-u")
@@ -193,10 +229,34 @@ def yield_tasks(diff_fnames: Collection[str], *, env: str | None) -> Iterable[Ta
         after=["terraform_apply"],
         requires=["terraform_init"],
     )
+
+    build_tasks: list[str] = []
+
+    for p in Path("src").glob("*/"):
+        yield Task(
+            f"src_{p.name}_test",
+            lambda p=p: task_test(p),
+            after=["terraform_login"],
+            autorun=any_globs(f"src/{p.name}/*"),
+        )
+        yield Task(
+            f"src_{p.name}_build_and_push",
+            with_env(lambda e, p=p: task_build_and_push(e, p)),
+            after=[f"src_{p.name}_test"],
+            autorun=any_globs(f"src/{p.name}/*"),
+        )
+        build_tasks.append(f"src_{p.name}_build_and_push")
+
+    yield Task(
+        "maybe_commit",
+        None,
+        wants=build_tasks,
+    )
+
     yield Task(
         "helm_release",
         with_env(task_helm),
-        requires=["terraform_login"],
+        requires=["terraform_login", "maybe_commit"],
         autorun=any_globs("helm/*"),
     )
 
