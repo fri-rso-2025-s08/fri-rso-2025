@@ -7,7 +7,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi_problem.handler import add_exception_handler
 
-from vehicle_manager import crud
+from vehicle_manager import crud, health
 from vehicle_manager.controller_link import run_telemetry_listener, run_veh_listener
 from vehicle_manager.db.core import DatabaseSessionManager
 from vehicle_manager.errors import eh
@@ -89,6 +89,7 @@ def make_app(*, settings: Settings | None = None) -> FastAPI:
             app.state.nc = nc
             add_exception_handler(app, eh)
 
+            app.include_router(health.router, prefix="/health")
             app.include_router(
                 crud.router,
                 prefix=f"/api/vehicle_manager/{settings.tenant_id}",
