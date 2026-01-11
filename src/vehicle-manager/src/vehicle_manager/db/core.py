@@ -25,23 +25,13 @@ class DatabaseSessionManager:
     async def connect(self) -> AsyncIterator[AsyncConnection]:
         assert self._engine is not None
         async with self._engine.begin() as connection:
-            try:
-                yield connection
-            except Exception:
-                await connection.rollback()
-                raise
+            yield connection
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
         assert self._sessionmaker is not None
-        session = self._sessionmaker()
-        try:
+        async with self._sessionmaker.begin() as session:
             yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
 
 
 async def get_db(request: Request):

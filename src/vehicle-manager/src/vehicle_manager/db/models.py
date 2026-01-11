@@ -40,6 +40,8 @@ class Vehicle(Base):
     vtype: Mapped[str] = mapped_column(String(32))
     vconfig: Mapped[Any] = mapped_column(JSONB)
     immobilized: Mapped[bool] = mapped_column()
+    lat: Mapped[float | None] = mapped_column()
+    lon: Mapped[float | None] = mapped_column()
 
 
 class Geofence(Base):

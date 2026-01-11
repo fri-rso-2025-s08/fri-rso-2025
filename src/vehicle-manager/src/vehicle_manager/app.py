@@ -7,10 +7,12 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi_problem.handler import add_exception_handler
 
+from vehicle_manager import crud
+from vehicle_manager.controller_link import run_telemetry_listener, run_veh_listener
 from vehicle_manager.db.core import DatabaseSessionManager
 from vehicle_manager.errors import eh
 from vehicle_manager.nats import NATS
-from vehicle_manager.routes import crud
+from vehicle_manager.resilience import run_background_task
 from vehicle_manager.settings import Settings
 
 
@@ -51,6 +53,26 @@ async def with_nats(nats_url):
         await nc.close()
 
 
+@asynccontextmanager
+async def with_listeners(dsm: DatabaseSessionManager, nc: NATS, settings: Settings):
+    async with asyncio.TaskGroup() as tg:
+        task_telemetry = tg.create_task(
+            run_background_task(
+                lambda: run_telemetry_listener(dsm, nc, settings),
+                "telemetry_listener",
+            )
+        )
+        task_veh_request = tg.create_task(
+            run_background_task(
+                lambda: run_veh_listener(dsm, nc, settings),
+                "veh_request_listener",
+            )
+        )
+        yield
+        task_telemetry.cancel()
+        task_veh_request.cancel()
+
+
 def make_app(*, settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = Settings()  # type: ignore
@@ -60,6 +82,7 @@ def make_app(*, settings: Settings | None = None) -> FastAPI:
         async with (
             with_session_manager(settings.database_url) as dsm,
             with_nats(settings.nats_url) as nc,
+            with_listeners(dsm, nc, settings),
         ):
             app.state.settings = settings
             app.state.db_session_manager = dsm
@@ -68,7 +91,7 @@ def make_app(*, settings: Settings | None = None) -> FastAPI:
 
             app.include_router(
                 crud.router,
-                prefix=f"/api/vehicle-manager/{settings.tenant_id}",
+                prefix=f"/api/vehicle_manager/{settings.tenant_id}",
             )
 
             yield

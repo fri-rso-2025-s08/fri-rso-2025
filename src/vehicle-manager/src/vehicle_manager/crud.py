@@ -8,6 +8,7 @@ from shapely.geometry import shape
 from sqlalchemy import select
 
 from vehicle_manager.auth import AUTH_RESPONSES_DICT, GetUserId, get_user_id
+from vehicle_manager.controller_link import send_veh_delta, transmit_immobilize
 from vehicle_manager.db.core import GetDb
 from vehicle_manager.db.models import (
     Geofence,
@@ -26,27 +27,24 @@ from vehicle_manager.db.models import (
     VehiclePos,
 )
 from vehicle_manager.errors import GeofenceNotFoundError, VehicleNotFoundError, eh
+from vehicle_manager.nats import GetNats
+from vehicle_manager.settings import GetSettings
 
 
 def todo(reason: str):
     raise RuntimeError(f"TODO: {reason}")
 
 
-class VehicleConfigTestCfg(BaseModel):
+class VehicleConfigTest(BaseModel):
     lat: float
     lon: float
     std: float
 
 
-class VehicleConfigTest(BaseModel):
-    vtype: Literal["test"]
-    vconfig: VehicleConfigTestCfg
-
-
 class VehicleBase(BaseModel):
     name: str = Field(max_length=64)
+    vtype: Literal["test"]
     vconfig: VehicleConfigTest
-    immobilized: bool
 
 
 class VehicleCreate(VehicleBase):
@@ -61,6 +59,9 @@ class VehicleUpdate(BaseModel):
 class VehicleRead(VehicleBase):
     id: UUID
     active: bool
+    immobilized: bool
+    lat: float | None
+    lon: float | None
 
     model_config = {"from_attributes": True}
 
@@ -184,6 +185,8 @@ async def get_vehicle(
 @router.post("/vehicles/")
 async def create_vehicle(
     db: GetDb,
+    nc: GetNats,
+    settings: GetSettings,
     user_id: GetUserId,
     payload: VehicleCreate,
 ) -> VehicleRead:
@@ -191,9 +194,11 @@ async def create_vehicle(
     vehicle = Vehicle(
         active=True,
         name=payload.name,
-        vtype=payload.vconfig.vtype,
-        vconfig=payload.vconfig.vconfig,
-        immobilized=payload.immobilized,
+        vtype=payload.vtype,
+        vconfig=payload.vconfig.model_dump(),
+        immobilized=False,
+        lat=None,
+        lon=None,
     )
     db.add(vehicle)
     await db.flush()
@@ -201,7 +206,7 @@ async def create_vehicle(
     event = VehicleCreated(ts=ts, vehicle_id=vehicle.id, user_id=user_id)
     db.add(event)
 
-    todo("send vehicle delta")
+    await send_veh_delta(nc, settings, vehicle)
 
     return VehicleRead.model_validate(vehicle)
 
@@ -209,6 +214,8 @@ async def create_vehicle(
 @router.put("/vehicles/{id}", responses=VEH_RESPONSES_DICT)
 async def update_vehicle(
     db: GetDb,
+    nc: GetNats,
+    settings: GetSettings,
     user_id: GetUserId,
     id: UUID,
     payload: VehicleUpdate,
@@ -220,7 +227,7 @@ async def update_vehicle(
     modified = False
 
     if payload.immobilized is not None and payload.immobilized != vehicle.immobilized:
-        todo("send immobilization cmd")
+        await transmit_immobilize(nc, settings, id, user_id, None, payload.immobilized)
 
     if payload.name is not None and payload.name != vehicle.name:
         vehicle.name = payload.name
@@ -238,6 +245,8 @@ async def update_vehicle(
 @router.delete("/vehicles/{id}", responses=VEH_RESPONSES_DICT)
 async def delete_vehicle(
     db: GetDb,
+    nc: GetNats,
+    settings: GetSettings,
     user_id: GetUserId,
     id: UUID,
 ) -> None:
@@ -249,7 +258,7 @@ async def delete_vehicle(
     event = VehicleDeleted(ts=datetime.now(UTC), vehicle_id=vehicle.id, user_id=user_id)
     db.add(event)
 
-    todo("send vehicle delta")
+    await send_veh_delta(nc, settings, vehicle)
 
 
 @router.get("/geofences/")

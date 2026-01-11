@@ -15,6 +15,8 @@ def _belongs_to_worker(
     worker_ids: Iterable[str],
     resource_id: str,
 ) -> bool:
+    print(worker_ids)
+
     def get_hash(key: str) -> int:
         return int(md5(key.encode("utf-8")).hexdigest(), 16)
 
@@ -107,6 +109,8 @@ async def run_workers(
                         remove_veh(vid)
 
         async def rebalance_loop():
+            nonlocal worker_ids
+
             while True:
                 other_worker_ids, wait_for_worker_ids = q_worker_ids.get()
                 worker_ids = frozenset(other_worker_ids) | {worker_id}
@@ -129,3 +133,4 @@ async def run_workers(
             )
             for veh in delta.vehicles:
                 add_veh(veh)
+            await asyncio.Future()

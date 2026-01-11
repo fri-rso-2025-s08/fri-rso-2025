@@ -1,5 +1,8 @@
+import asyncio
 import random
+from datetime import UTC, datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter
 
@@ -18,8 +21,14 @@ class _Vdata(BaseModel):
     std: float
 
 
+class VehicleCmdImmobilizerCorrelation(BaseModel):
+    user_id: str | None
+    geofence_id: UUID | None
+
+
 class VehicleCmdImmobilizer(BaseModel):
     type: Literal["immobilizer"] = "immobilizer"
+    correlation: VehicleCmdImmobilizerCorrelation
     active: bool
 
 
@@ -27,11 +36,14 @@ class VehicleStatusPos(BaseModel):
     type: Literal["pos"] = "pos"
     lat: float
     lon: float
+    ts: datetime
 
 
 class VehicleStatusImmobilizer(BaseModel):
     type: Literal["immobilizer"] = "immobilizer"
+    correlation: VehicleCmdImmobilizerCorrelation
     active: bool
+    ts: datetime
 
 
 VehicleStatus = VehicleStatusPos | VehicleStatusImmobilizer
@@ -44,14 +56,19 @@ async def run_vehicle_controller(
     sub_veh_cmd: str,
     sub_veh_status: str,
 ):
-    assert vehicle_config.vtype == "test"  # ran out of time to do this properly
+    # ran out of time to do this properly, vehicle type and behavior is hardcoded
+    assert vehicle_config.vtype == "test"
     vdata = _Vdata.model_validate(vehicle_config.vdata)
 
     async def on_cmd_msg(msg: Msg):
         cmd = VehicleCmdImmobilizer.model_validate_json(msg.data)
         await nc.publish(
             sub_veh_status,
-            VehicleStatusImmobilizer(active=cmd.active)
+            VehicleStatusImmobilizer(
+                correlation=cmd.correlation,
+                active=cmd.active,
+                ts=datetime.now(UTC),
+            )
             .model_dump_json()
             .encode("utf-8"),
         )
@@ -63,7 +80,9 @@ async def run_vehicle_controller(
                 VehicleStatusPos(
                     lat=vdata.lat + random.gauss(0, vdata.std),
                     lon=vdata.lon + random.gauss(0, vdata.std),
+                    ts=datetime.now(UTC),
                 )
                 .model_dump_json()
                 .encode("utf-8"),
             )
+            await asyncio.sleep(5.0)
