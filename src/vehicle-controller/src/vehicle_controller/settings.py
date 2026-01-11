@@ -1,10 +1,21 @@
 from fastapi import FastAPI, Request
+from pydantic import computed_field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     nats_url: str
-    subject_heartbeat: str
+    subject_base: str
+
+    @computed_field
+    @property
+    def sub_heartbeat(self) -> str:
+        return f"{self.subject_base}.hb"
+
+    @computed_field
+    @property
+    def sub_worker_list(self) -> str:
+        return f"{self.subject_base}.wl"
 
     model_config = {
         "env_file": ".env",

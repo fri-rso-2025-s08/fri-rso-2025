@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -13,3 +14,4 @@ async def run_background_task(coro: Callable[[], Awaitable[None]], name: str):
             logger.warning(
                 "Background task %r raised exception, restarting.", name, exc_info=e
             )
+        await asyncio.sleep(1)

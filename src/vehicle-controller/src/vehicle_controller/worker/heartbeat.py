@@ -1,6 +1,6 @@
 import asyncio
 
-from vehicle_controller.nats import NATS, Msg
+from vehicle_controller.nats import NATS, Msg, with_cleanup_sub
 from vehicle_controller.shared import Heartbeat
 
 
@@ -17,13 +17,11 @@ async def run_heartbeat(
     async def message_handler(msg: Msg):
         await send_heartbeat(True)
 
-    sub = await nc.subscribe(subject_heartbeat_req, cb=message_handler)
-
-    try:
-        await send_heartbeat(active=True)
-        await asyncio.Future()
-    finally:
+    async with with_cleanup_sub(
+        await nc.subscribe(subject_heartbeat_req, cb=message_handler)
+    ):
         try:
-            await send_heartbeat(active=False)
+            await send_heartbeat(active=True)
+            await asyncio.Future()
         finally:
-            await sub.unsubscribe()
+            await send_heartbeat(active=False)
