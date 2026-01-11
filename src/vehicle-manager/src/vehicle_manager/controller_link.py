@@ -188,7 +188,7 @@ async def run_telemetry_listener(
         await on_status(vehicle_id, status)
 
     async with with_cleanup_sub(
-        await nc.subscribe(f"{settings.sub_veh_status}.*", cb=on_msg)
+        await nc.subscribe(f"{settings.sub_veh_status}.*", "vm", cb=on_msg)
     ):
         await asyncio.Future()
 
@@ -228,7 +228,7 @@ async def run_veh_listener(
             )
 
     async with with_cleanup_sub(
-        await nc.subscribe(f"{settings.sub_veh_deltas}.l", cb=on_msg)
+        await nc.subscribe(f"{settings.sub_veh_deltas}.l", "vm", cb=on_msg)
     ):
         await asyncio.Future()
 
