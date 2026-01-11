@@ -11,6 +11,7 @@ from vehicle_manager.errors import (
     TokenExpiredError,
     TokenVerificationFailedError,
     WrongTenantError,
+    eh,
 )
 from vehicle_manager.settings import GetSettings
 
@@ -68,3 +69,17 @@ def get_user_info(
 
 
 GetUserInfo = Annotated[UserInfo, Depends(get_user_info)]
+
+
+def get_user_id(user_info: GetUserInfo) -> str:
+    return user_info.sub
+
+
+GetUserId = Annotated[str, Depends(get_user_id)]
+
+
+AUTH_RESPONSES_DICT: dict[int | str, Any] = {
+    401: eh.generate_swagger_response(
+        TokenExpiredError, TokenVerificationFailedError, WrongTenantError
+    )
+}

@@ -36,6 +36,7 @@ class Vehicle(Base):
         init=False,
     )
     active: Mapped[bool] = mapped_column()
+    name: Mapped[str] = mapped_column(String(64))
     vtype: Mapped[str] = mapped_column(String(32))
     vconfig: Mapped[Any] = mapped_column(JSONB)
     immobilized: Mapped[bool] = mapped_column()

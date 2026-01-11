@@ -1,332 +1,552 @@
-# ruff: noqa: E712
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from shapely.geometry import Point, shape
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field, field_validator
+from shapely.geometry import shape
 from sqlalchemy import select
 
+from vehicle_manager.auth import AUTH_RESPONSES_DICT, GetUserId, get_user_id
 from vehicle_manager.db.core import GetDb
 from vehicle_manager.db.models import (
     Geofence,
     GeofenceCreated,
     GeofenceDeleted,
+    GeofenceEvent,
     GeofenceModified,
     Vehicle,
     VehicleCreated,
     VehicleDeleted,
+    VehicleEvent,
     VehicleGeofence,
     VehicleGeofenceEvent,
     VehicleImmobilized,
     VehicleModified,
     VehiclePos,
 )
-from vehicle_manager.errors import VehicleNotFoundError, eh
-
-# ----------------------------------------------------------------------
-# Pydantic Schemas
-# ----------------------------------------------------------------------
+from vehicle_manager.errors import GeofenceNotFoundError, VehicleNotFoundError, eh
 
 
-class VehicleCreate(BaseModel):
-    user_id: str
-    vtype: str
-    vconfig: dict[str, Any]
+def todo(reason: str):
+    raise RuntimeError(f"TODO: {reason}")
+
+
+class VehicleConfigTestCfg(BaseModel):
+    lat: float
+    lon: float
+    std: float
+
+
+class VehicleConfigTest(BaseModel):
+    vtype: Literal["test"]
+    vconfig: VehicleConfigTestCfg
+
+
+class VehicleBase(BaseModel):
+    name: str = Field(max_length=64)
+    vconfig: VehicleConfigTest
+    immobilized: bool
+
+
+class VehicleCreate(VehicleBase):
+    pass
 
 
 class VehicleUpdate(BaseModel):
-    user_id: str
-    vtype: str | None = None
-    vconfig: dict[str, Any] | None = None
+    name: str | None = Field(None, max_length=64)
+    immobilized: bool | None = None
 
 
-class GeofenceCreate(BaseModel):
-    data: dict[str, Any]
-    immobilize_enter: bool = False
-    immobilize_leave: bool = False
+class VehicleRead(VehicleBase):
+    id: UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class GeofenceBase(BaseModel):
+    name: str = Field(max_length=64)
+    data: dict[str, Any]  # GeoJSON
+    immobilize_enter: bool
+    immobilize_leave: bool
+
+    @field_validator("data")
+    @classmethod
+    def validate_geojson(cls, v: dict[str, Any]) -> dict[str, Any]:
+        try:
+            geom = shape(v)
+            if not geom.is_valid:
+                raise ValueError("Invalid geometry")
+        except Exception:
+            raise ValueError("Invalid GeoJSON data")
+        return v
+
+
+class GeofenceCreate(GeofenceBase):
+    pass
 
 
 class GeofenceUpdate(BaseModel):
-    data: dict[str, Any] | None = None
+    name: str | None = Field(None, max_length=64)
     immobilize_enter: bool | None = None
     immobilize_leave: bool | None = None
 
 
-class LatLon(BaseModel):
+class GeofenceRead(GeofenceBase):
+    id: UUID
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class BaseEventRead(BaseModel):
+    ts: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PosRead(BaseEventRead):
     lat: float
     lon: float
 
 
-# ----------------------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------------------
+class BaseUserEventRead(BaseEventRead):
+    user_id: str
 
 
-def get_utc_now():
-    return datetime.now(UTC)
+class CreatedEventRead(BaseUserEventRead):
+    type: Literal["created"] = "created"
 
 
-router = APIRouter()
-
-# ----------------------------------------------------------------------
-# Routes
-# ----------------------------------------------------------------------
+class ModifiedEventRead(BaseUserEventRead):
+    type: Literal["modified"] = "modified"
 
 
-@router.post("/vehicles")
-async def create_vehicle(
-    payload: VehicleCreate,
+class DeletedEventRead(BaseUserEventRead):
+    type: Literal["deleted"] = "deleted"
+
+
+class ImmobilizedEventRead(BaseEventRead):
+    type: Literal["immobilized"] = "immobilized"
+    vehicle_id: UUID | None
+    user_id: str | None
+    geofence_id: UUID | None
+    immobilized: bool
+
+
+class GeofenceEventRead(BaseEventRead):
+    type: Literal["geofence"] = "geofence"
+    geofence_id: UUID | None
+    entered: bool
+
+
+router = APIRouter(
+    dependencies=[Depends(get_user_id)],
+    responses=AUTH_RESPONSES_DICT,
+)
+
+
+VEH_RESPONSES_DICT: dict[str | int, Any] = {
+    404: eh.generate_swagger_response(VehicleNotFoundError)
+}
+GEO_RESPONSES_DICT: dict[str | int, Any] = {
+    404: eh.generate_swagger_response(GeofenceNotFoundError)
+}
+BOTH_RESPONSES_DICT: dict[str | int, Any] = {
+    404: eh.generate_swagger_response(VehicleNotFoundError, GeofenceNotFoundError)
+}
+
+
+@router.get("/vehicles/")
+async def list_vehicles(
     db: GetDb,
-) -> str:
+    active: bool = True,
+) -> list[UUID]:
+    stmt = select(Vehicle.id).where(Vehicle.active == active)
+    result = await db.scalars(stmt)
+
+    return list(result.all())
+
+
+@router.get("/vehicles/{id}", responses=VEH_RESPONSES_DICT)
+async def get_vehicle(
+    db: GetDb,
+    id: UUID,
+) -> VehicleRead:
+    vehicle = await db.get(Vehicle, id)
+    if not vehicle:
+        raise VehicleNotFoundError()
+
+    return VehicleRead.model_validate(vehicle)
+
+
+@router.post("/vehicles/")
+async def create_vehicle(
+    db: GetDb,
+    user_id: GetUserId,
+    payload: VehicleCreate,
+) -> VehicleRead:
+    ts = datetime.now(UTC)
     vehicle = Vehicle(
         active=True,
-        vtype=payload.vtype,
-        vconfig=payload.vconfig,
-        immobilized=False,
+        name=payload.name,
+        vtype=payload.vconfig.vtype,
+        vconfig=payload.vconfig.vconfig,
+        immobilized=payload.immobilized,
     )
     db.add(vehicle)
     await db.flush()
 
-    event = VehicleCreated(
-        ts=get_utc_now(),
-        vehicle_id=vehicle.id,
-        user_id=payload.user_id,
-    )
+    event = VehicleCreated(ts=ts, vehicle_id=vehicle.id, user_id=user_id)
     db.add(event)
-    await db.commit()
 
-    return str(vehicle.id)
+    todo("send vehicle delta")
 
-
-@router.get(
-    "/vehicles/{vehicle_id}",
-    responses={404: eh.generate_swagger_response(VehicleNotFoundError)},
-)
-async def get_vehicle(vehicle_id: UUID, db: GetDb):
-    stmt = select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.active == True)
-    result = await db.execute(stmt)
-    vehicle = result.scalar_one_or_none()
-
-    if not vehicle:
-        raise VehicleNotFoundError()
-
-    return vehicle
+    return VehicleRead.model_validate(vehicle)
 
 
-@router.patch(
-    "/vehicles/{vehicle_id}",
-    responses={404: eh.generate_swagger_response(VehicleNotFoundError)},
-)
+@router.put("/vehicles/{id}", responses=VEH_RESPONSES_DICT)
 async def update_vehicle(
-    vehicle_id: UUID,
-    payload: VehicleUpdate,
-    user_id: str,
     db: GetDb,
-):
-    stmt = select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.active == True)
-    result = await db.execute(stmt)
-    vehicle = result.scalar_one_or_none()
-
-    if not vehicle:
+    user_id: GetUserId,
+    id: UUID,
+    payload: VehicleUpdate,
+) -> None:
+    vehicle = await db.get(Vehicle, id)
+    if not vehicle or not vehicle.active:
         raise VehicleNotFoundError()
 
-    if payload.vtype is not None:
-        vehicle.vtype = payload.vtype
-    if payload.vconfig is not None:
-        vehicle.vconfig = payload.vconfig
+    modified = False
 
-    event = VehicleModified(ts=get_utc_now(), vehicle_id=vehicle.id, user_id=user_id)
-    db.add(event)
-    await db.commit()
-    return {"status": "updated"}
+    if payload.immobilized is not None and payload.immobilized != vehicle.immobilized:
+        todo("send immobilization cmd")
+
+    if payload.name is not None and payload.name != vehicle.name:
+        vehicle.name = payload.name
+        modified = True
+
+    if modified:
+        mod_event = VehicleModified(
+            ts=datetime.now(UTC),
+            vehicle_id=vehicle.id,
+            user_id=user_id,
+        )
+        db.add(mod_event)
 
 
-@router.delete("/vehicles/{vehicle_id}")
-async def delete_vehicle(vehicle_id: UUID, user_id: str, db: GetDb):
-    stmt = select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.active == True)
-    result = await db.execute(stmt)
-    vehicle = result.scalar_one_or_none()
-
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found")
+@router.delete("/vehicles/{id}", responses=VEH_RESPONSES_DICT)
+async def delete_vehicle(
+    db: GetDb,
+    user_id: GetUserId,
+    id: UUID,
+) -> None:
+    vehicle = await db.get(Vehicle, id)
+    if not vehicle or not vehicle.active:
+        raise VehicleNotFoundError()
 
     vehicle.active = False
-
-    event = VehicleDeleted(ts=get_utc_now(), vehicle_id=vehicle.id, user_id=user_id)
+    event = VehicleDeleted(ts=datetime.now(UTC), vehicle_id=vehicle.id, user_id=user_id)
     db.add(event)
-    await db.commit()
-    return {"status": "deleted"}
+
+    todo("send vehicle delta")
 
 
-@router.post("/geofences/", response_model=str)
-async def create_geofence(
-    payload: GeofenceCreate,
-    user_id: str,
+@router.get("/geofences/")
+async def list_geofences(
     db: GetDb,
-):
-    geo = Geofence(
+    active: bool = True,
+) -> list[UUID]:
+    stmt = select(Geofence.id).where(Geofence.active == active)
+    result = await db.scalars(stmt)
+
+    return list(result.all())
+
+
+@router.get("/geofences/{id}", responses=GEO_RESPONSES_DICT)
+async def get_geofence(
+    db: GetDb,
+    id: UUID,
+) -> GeofenceRead:
+    geofence = await db.get(Geofence, id)
+    if not geofence:
+        raise GeofenceNotFoundError()
+
+    return GeofenceRead.model_validate(geofence)
+
+
+@router.post("/geofences/")
+async def create_geofence(
+    db: GetDb,
+    user_id: GetUserId,
+    payload: GeofenceCreate,
+) -> GeofenceRead:
+    ts = datetime.now(UTC)
+    geofence = Geofence(
         active=True,
+        name=payload.name,
         data=payload.data,
         immobilize_enter=payload.immobilize_enter,
         immobilize_leave=payload.immobilize_leave,
     )
-    db.add(geo)
+    db.add(geofence)
     await db.flush()
 
-    event = GeofenceCreated(ts=get_utc_now(), geofence_id=geo.id, user_id=user_id)
+    event = GeofenceCreated(ts=ts, geofence_id=geofence.id, user_id=user_id)
     db.add(event)
-    await db.commit()
-    return str(geo.id)
+
+    return GeofenceRead.model_validate(geofence)
 
 
-@router.patch("/geofences/{geofence_id}")
+@router.put("/geofences/{id}", responses=GEO_RESPONSES_DICT)
 async def update_geofence(
-    geofence_id: UUID,
+    db: GetDb,
+    user_id: GetUserId,
+    id: UUID,
     payload: GeofenceUpdate,
-    user_id: str,
-    db: GetDb,
-):
-    stmt = select(Geofence).where(Geofence.id == geofence_id, Geofence.active == True)
-    result = await db.execute(stmt)
-    geo = result.scalar_one_or_none()
+) -> None:
+    geofence = await db.get(Geofence, id)
+    if not geofence or not geofence.active:
+        raise GeofenceNotFoundError()
 
-    if not geo:
-        raise HTTPException(status_code=404, detail="Geofence not found")
+    modified = False
 
-    if payload.data is not None:
-        geo.data = payload.data
-    if payload.immobilize_enter is not None:
-        geo.immobilize_enter = payload.immobilize_enter
-    if payload.immobilize_leave is not None:
-        geo.immobilize_leave = payload.immobilize_leave
+    if payload.name is not None and payload.name != geofence.name:
+        geofence.name = payload.name
+        modified = True
 
-    event = GeofenceModified(ts=get_utc_now(), geofence_id=geo.id, user_id=user_id)
-    db.add(event)
-    await db.commit()
-    return {"status": "updated"}
+    if (
+        payload.immobilize_enter is not None
+        and payload.immobilize_enter != geofence.immobilize_enter
+    ):
+        geofence.immobilize_enter = payload.immobilize_enter
+        modified = True
 
+    if (
+        payload.immobilize_leave is not None
+        and payload.immobilize_leave != geofence.immobilize_leave
+    ):
+        geofence.immobilize_leave = payload.immobilize_leave
+        modified = True
 
-@router.delete("/geofences/{geofence_id}")
-async def delete_geofence(
-    geofence_id: UUID,
-    user_id: str,
-    db: GetDb,
-):
-    stmt = select(Geofence).where(Geofence.id == geofence_id, Geofence.active == True)
-    result = await db.execute(stmt)
-    geo = result.scalar_one_or_none()
-
-    if not geo:
-        raise HTTPException(status_code=404, detail="Geofence not found")
-
-    geo.active = False
-
-    event = GeofenceDeleted(ts=get_utc_now(), geofence_id=geo.id, user_id=user_id)
-    db.add(event)
-    await db.commit()
-    return {"status": "deleted"}
-
-
-@router.post("/vehicles/{vehicle_id}/position")
-async def record_vehicle_position(
-    vehicle_id: UUID,
-    pos: LatLon,
-    db: GetDb,
-):
-    ts_now = get_utc_now()
-
-    # 1. Fetch Vehicle
-    v_result = await db.execute(
-        select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.active == True)
-    )
-    vehicle = v_result.scalar_one_or_none()
-    if not vehicle:
-        raise HTTPException(status_code=404, detail="Vehicle not found")
-
-    # 2. Record Position Event
-    pos_event = VehiclePos(ts=ts_now, vehicle_id=vehicle_id, lat=pos.lat, lon=pos.lon)
-    db.add(pos_event)
-
-    # 3. Geofence Logic
-    # Get geofences linked to this vehicle
-    stmt = (
-        select(Geofence)
-        .join(VehicleGeofence, VehicleGeofence.geofence_id == Geofence.id)
-        .where(VehicleGeofence.vehicle_id == vehicle_id)
-        .where(Geofence.active == True)
-    )
-    gf_result = await db.execute(stmt)
-    linked_geofences = gf_result.scalars().all()
-
-    current_point = Point(pos.lon, pos.lat)
-
-    for fence in linked_geofences:
-        # 3a. Geometry Check
-        try:
-            # shapely.shape requires the geometry part of the feature
-            geom_data = fence.data.get("geometry") or fence.data
-            fence_shape = shape(geom_data)
-        except Exception:
-            # Skip malformed geofences without crashing request
-            continue
-
-        is_inside = fence_shape.contains(current_point)
-
-        # 3b. Fetch latest state from DB
-        last_evt_stmt = (
-            select(VehicleGeofenceEvent)
-            .where(VehicleGeofenceEvent.vehicle_id == vehicle_id)
-            .where(VehicleGeofenceEvent.geofence_id == fence.id)
-            .order_by(VehicleGeofenceEvent.ts.desc())
-            .limit(1)
+    if modified:
+        event = GeofenceModified(
+            ts=datetime.now(UTC),
+            geofence_id=geofence.id,
+            user_id=user_id,
         )
-        last_evt_result = await db.execute(last_evt_stmt)
-        last_evt = last_evt_result.scalar_one_or_none()
-
-        was_inside = last_evt.entered if last_evt else False
-
-        # 3c. Emit event if state changed
-        if is_inside != was_inside:
-            gf_event = VehicleGeofenceEvent(
-                ts=ts_now,
-                vehicle_id=vehicle_id,
-                geofence_id=fence.id,
-                entered=is_inside,
-            )
-            db.add(gf_event)
-
-            # 3d. Check Immobilization Logic
-            should_immobilize = False
-            if is_inside and fence.immobilize_enter:
-                should_immobilize = True
-            elif not is_inside and fence.immobilize_leave:
-                should_immobilize = True
-
-            if should_immobilize and not vehicle.immobilized:
-                vehicle.immobilized = True
-                imm_event = VehicleImmobilized(
-                    ts=ts_now,
-                    vehicle_id=vehicle_id,
-                    user_id="SYSTEM",
-                    geofence_id=fence.id,
-                    immobilized=True,
-                )
-                db.add(imm_event)
-
-    await db.commit()
-    return {"status": "position_recorded"}
+        db.add(event)
 
 
-@router.get("/events/vehicle/{vehicle_id}")
-async def list_vehicle_events(vehicle_id: UUID, db: GetDb):
-    stmt = (
-        select(VehiclePos)
-        .where(VehiclePos.vehicle_id == vehicle_id)
-        .order_by(VehiclePos.ts.desc())
-        .limit(100)
+@router.delete("/geofences/{id}", responses=GEO_RESPONSES_DICT)
+async def delete_geofence(
+    db: GetDb,
+    user_id: GetUserId,
+    id: UUID,
+) -> None:
+    geofence = await db.get(Geofence, id)
+    if not geofence or not geofence.active:
+        raise GeofenceNotFoundError()
+
+    geofence.active = False
+    event = GeofenceDeleted(
+        ts=datetime.now(UTC), geofence_id=geofence.id, user_id=user_id
     )
-    result = await db.execute(stmt)
-    events = result.scalars().all()
-    return events
+    db.add(event)
+
+
+@router.get("/geofence_vehicles/{geofence_id}/")
+async def list_vehicles_in_geofence_assignment(
+    db: GetDb,
+    geofence_id: UUID,
+) -> list[UUID]:
+    stmt = select(VehicleGeofence.vehicle_id).where(
+        VehicleGeofence.geofence_id == geofence_id
+    )
+    result = await db.scalars(stmt)
+
+    return list(result.all())
+
+
+@router.get("/vehicle_geofences/{vehicle_id}/")
+async def list_geofences_assigned_to_vehicle(
+    db: GetDb,
+    vehicle_id: UUID,
+) -> list[UUID]:
+    stmt = select(VehicleGeofence.geofence_id).where(
+        VehicleGeofence.vehicle_id == vehicle_id
+    )
+    result = await db.scalars(stmt)
+
+    return list(result.all())
+
+
+@router.post(
+    "/geofence_vehicles/{geofence_id}/{vehicle_id}",
+    responses=BOTH_RESPONSES_DICT,
+)
+async def assign_vehicle_to_geofence(
+    db: GetDb,
+    geofence_id: UUID,
+    vehicle_id: UUID,
+) -> None:
+    if not await db.scalar(select(Vehicle.active).where(Vehicle.id == vehicle_id)):
+        raise VehicleNotFoundError()
+
+    if not await db.scalar(select(Geofence.active).where(Geofence.id == geofence_id)):
+        raise GeofenceNotFoundError()
+
+    exists = await db.scalar(
+        select(VehicleGeofence)
+        .where(VehicleGeofence.vehicle_id == vehicle_id)
+        .where(VehicleGeofence.geofence_id == geofence_id)
+    )
+    if exists:
+        return
+
+    assoc = VehicleGeofence(vehicle_id=vehicle_id, geofence_id=geofence_id)
+    db.add(assoc)
+
+
+@router.delete(
+    "/geofence_vehicles/{geofence_id}/{vehicle_id}", responses=BOTH_RESPONSES_DICT
+)
+async def remove_vehicle_from_geofence(
+    db: GetDb,
+    geofence_id: UUID,
+    vehicle_id: UUID,
+) -> None:
+    stmt = (
+        select(VehicleGeofence)
+        .where(VehicleGeofence.vehicle_id == vehicle_id)
+        .where(VehicleGeofence.geofence_id == geofence_id)
+    )
+    assoc = await db.scalar(stmt)
+    if assoc:
+        await db.delete(assoc)
+
+
+@router.get("/vehicle_positions/{id}")
+async def get_vehicle_positions(
+    db: GetDb,
+    id: UUID,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    limit: Annotated[int, Query(ge=0)] = 0,
+) -> list[PosRead]:
+    stmt = select(VehiclePos).where(VehiclePos.vehicle_id == id)
+
+    if start_date:
+        stmt = stmt.where(VehiclePos.ts >= start_date)
+    if end_date:
+        stmt = stmt.where(VehiclePos.ts <= end_date)
+
+    stmt = stmt.order_by(VehiclePos.ts.desc())
+
+    if limit > 0:
+        stmt = stmt.limit(limit)
+
+    result = await db.scalars(stmt)
+
+    return [PosRead.model_validate(r) for r in result.all()]
+
+
+# Vibe coding ahead
+
+
+type EventTypes = (
+    CreatedEventRead
+    | ModifiedEventRead
+    | DeletedEventRead
+    | ImmobilizedEventRead
+    | GeofenceEventRead
+)
+
+
+@router.get("/vehicle_events/{id}")
+async def get_vehicle_events(
+    db: GetDb,
+    id: UUID,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    limit: Annotated[int, Query(ge=0)] = 0,
+) -> list[EventTypes]:
+    queries: list[tuple[type[VehicleEvent], type[EventTypes]]] = [
+        (VehicleCreated, CreatedEventRead),
+        (VehicleDeleted, DeletedEventRead),
+        (VehicleModified, ModifiedEventRead),
+        (VehicleImmobilized, ImmobilizedEventRead),
+        (VehicleGeofenceEvent, GeofenceEventRead),
+    ]
+
+    results: list[EventTypes] = []
+
+    for model, schema in queries:
+        stmt = select(model).where(model.vehicle_id == id)
+
+        if start_date:
+            stmt = stmt.where(model.ts >= start_date)
+        if end_date:
+            stmt = stmt.where(model.ts <= end_date)
+
+        stmt = stmt.order_by(model.ts.desc())
+
+        if limit > 0:
+            stmt = stmt.limit(limit)
+
+        rows = await db.scalars(stmt)
+        results += [schema.model_validate(r) for r in rows]
+
+    results.sort(key=lambda x: x.ts, reverse=True)
+
+    if limit > 0:
+        return results[:limit]
+
+    return results
+
+
+@router.get("/geofence_events/{id}")
+async def get_geofence_events(
+    db: GetDb,
+    id: UUID,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    limit: Annotated[int, Query(ge=0)] = 0,
+) -> list[EventTypes]:
+    queries: list[
+        tuple[
+            type[GeofenceEvent | VehicleGeofenceEvent | VehicleImmobilized],
+            type[EventTypes],
+        ]
+    ] = [
+        (GeofenceCreated, CreatedEventRead),
+        (GeofenceDeleted, DeletedEventRead),
+        (GeofenceModified, ModifiedEventRead),
+        (VehicleImmobilized, ImmobilizedEventRead),
+        (VehicleGeofenceEvent, GeofenceEventRead),
+    ]
+
+    results: list[EventTypes] = []
+
+    for model, schema in queries:
+        stmt = select(model).where(model.geofence_id == id)
+
+        if start_date:
+            stmt = stmt.where(model.ts >= start_date)
+        if end_date:
+            stmt = stmt.where(model.ts <= end_date)
+
+        stmt = stmt.order_by(model.ts.desc())
+
+        if limit > 0:
+            stmt = stmt.limit(limit)
+
+        rows = await db.scalars(stmt)
+        results += [schema.model_validate(r) for r in rows]
+
+    results.sort(key=lambda x: x.ts, reverse=True)
+
+    if limit > 0:
+        return results[:limit]
+
+    return results

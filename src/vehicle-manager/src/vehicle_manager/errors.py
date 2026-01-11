@@ -22,4 +22,9 @@ class VehicleNotFoundError(StatusProblem):
     title = "Vehicle not found."
 
 
+class GeofenceNotFoundError(StatusProblem):
+    status = 404
+    title = "Geofence not found."
+
+
 eh = new_exception_handler()
