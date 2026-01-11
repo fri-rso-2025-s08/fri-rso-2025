@@ -6,6 +6,7 @@ declare global {
             user: {
                 accessToken: string;
                 idToken: string;
+                tenant_id: string;
             };
         }
 

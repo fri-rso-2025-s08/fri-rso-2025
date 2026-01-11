@@ -14,3 +14,7 @@ export async function getOAuthConfig() {
     }
     return oAuthConfig;
 }
+
+export function computeExpiresAt(src: number = 60) {
+    return new Date(Date.now() + (src / 2) * 1000);
+}

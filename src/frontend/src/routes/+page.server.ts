@@ -1,3 +1,5 @@
-export const load = async (p) => {
-    return p.locals;
-};
+import { redirect } from "@sveltejs/kit";
+
+export function load() {
+    throw redirect(307, "/vehicles");
+}

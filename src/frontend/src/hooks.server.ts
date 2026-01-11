@@ -1,6 +1,7 @@
-import { getOAuthConfig, OAUTH_REDIRECT_URI } from "$lib/server/oauth";
+import { computeExpiresAt, getOAuthConfig, OAUTH_REDIRECT_URI } from "$lib/server/oauth";
 import { getRedis, SessionJson } from "$lib/server/redis";
 import { redirect, type RequestEvent } from "@sveltejs/kit";
+import { decodeJwt } from "jose";
 import {
     buildAuthorizationUrl,
     calculatePKCECodeChallenge,
@@ -30,7 +31,7 @@ async function startAuthFlow(event: RequestEvent) {
 
     const url = buildAuthorizationUrl(config, {
         redirect_uri: OAUTH_REDIRECT_URI,
-        scope: "openid profile email offline_access",
+        scope: "openid profile email offline_access tenant",
         prompt: "select_account",
         code_challenge,
         code_challenge_method: "S256",
@@ -78,7 +79,7 @@ export const handle = async ({ event, resolve }) => {
                     accessToken: response.access_token,
                     refreshToken: response.refresh_token ?? session.refreshToken,
                     idToken: response.id_token ?? session.idToken,
-                    expiresAt: new Date(Date.now() + (response.expires_in || 3600) * 1000)
+                    expiresAt: computeExpiresAt(response.expiresIn())
                 }),
                 { expiration: { type: "EX", value: 60 * 60 * 24 * 30 } }
             );
@@ -89,11 +90,12 @@ export const handle = async ({ event, resolve }) => {
         }
     }
 
+    const claims = decodeJwt(session.idToken);
     event.locals.user = {
         accessToken: session.accessToken,
-        idToken: session.idToken
+        idToken: session.idToken,
+        tenant_id: claims.tenant_id as string
     };
-    // const claims = decodeJwt(session.idToken);
 
     return resolve(event);
 };

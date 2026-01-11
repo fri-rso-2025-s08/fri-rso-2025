@@ -148,6 +148,8 @@ async def process_immobilizer_telemetry(
     )
     db.add(obj)
 
+    vehicle.immobilized = active
+
 
 VehicleStatus = VehicleStatusPos | VehicleStatusImmobilizer
 VehicleStatusAdapter = TypeAdapter[VehicleStatus](VehicleStatus)
@@ -235,7 +237,7 @@ async def run_veh_listener(
 
 @with_retries(10, 5.0)
 async def send_veh_delta(nc: NATS, settings: Settings, vehicle: Vehicle):
-    if vehicle.active:
+    if not vehicle.active:
         resp = ResponseDelete(vehicle_ids=[str(vehicle.id)])
     else:
         resp = ResponseUpdate(

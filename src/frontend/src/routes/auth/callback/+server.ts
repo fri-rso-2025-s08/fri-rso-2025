@@ -1,4 +1,4 @@
-import { getOAuthConfig } from "$lib/server/oauth";
+import { computeExpiresAt, getOAuthConfig } from "$lib/server/oauth";
 import { getRedis, SessionJson } from "$lib/server/redis";
 import { error, redirect } from "@sveltejs/kit";
 import { authorizationCodeGrant } from "openid-client";
@@ -27,13 +27,13 @@ export async function GET({ url, cookies }) {
         throw error(400, "OAuth Grant failed");
     }
 
-    const { access_token, refresh_token, id_token, expires_in } = tokenSet;
+    const { access_token, refresh_token, id_token } = tokenSet;
 
     if (!access_token) throw error(500, "Provider did not return an access token");
     if (!id_token) throw error(500, "Provider did not return an id token");
 
     const sessionId = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + (expires_in || 3600) * 1000);
+    const expiresAt = computeExpiresAt(tokenSet.expiresIn());
 
     const redis = await getRedis();
     await redis.set(
