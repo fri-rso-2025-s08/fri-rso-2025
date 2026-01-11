@@ -1,5 +1,4 @@
-// src/routes/health/ready/+server.ts
-import { getRedis } from "$lib/server/redis"; // Import your singleton client
+import { getRedis } from "$lib/server/redis";
 import { json } from "@sveltejs/kit";
 
 export async function GET() {
