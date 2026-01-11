@@ -1,0 +1,15 @@
+services:
+  nats:
+    image: nats:latest
+    # -js: Enable JetStream
+    # -m 8222: Enable HTTP monitoring port
+    # -sd /data: Set store directory for persistence
+    command: "-js -m 8222 -sd /data"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+
+volumes:
+  nats_data:
