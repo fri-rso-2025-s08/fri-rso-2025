@@ -150,6 +150,7 @@ def task_build_and_push(env: str, p: Path):
             cmd_stdout_str(docker, "inspect", "--format={{index .RepoDigests 0}}", tag)
             .strip()
             .split("@")[-1]
+            .removeprefix("sha256:")
         )
     (p / "latest_tag").write_text(f"{tag_base}:{sha256}\n")
 
