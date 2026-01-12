@@ -298,8 +298,6 @@ class EnvConfigTenant(BaseModel):
     manager_postgres_password: MaybeEnvString
     manager_postgres_admin_password: MaybeEnvString | None = None
 
-    nats_token: MaybeEnvString
-
     controller_heartbeat_interval: float = 1
     controller_heartbeat_missed_limit: int = 2
 
@@ -488,7 +486,7 @@ def yield_releases(env: Env) -> Iterable[HelmRelease]:
                         "OAUTH_ISSUER_URL": c.oauth_issuer_url,
                         "OAUTH_JWKS_URL": c.oauth_jwks_url,
                         "OAUTH_CLIENT_ID": c.oauth_client_id,
-                        "NATS_URL": f"nats://{tenant.nats_token}@nats:4222",
+                        "NATS_URL": "nats://@nats:4222",
                     },
                 },
             ],
@@ -502,7 +500,7 @@ def yield_releases(env: Env) -> Iterable[HelmRelease]:
                 p_shared / "vehicle-controller.yaml",
                 {
                     "image": {"name": get_image_name(env, "vehicle-controller")},
-                    "sharedEnv": {"NATS_URL": f"nats://{tenant.nats_token}@nats:4222"},
+                    "sharedEnv": {"NATS_URL": "nats://@nats:4222"},
                     "coordinator": {
                         "env": {
                             "HEARTBEAT_INTERVAL": str(

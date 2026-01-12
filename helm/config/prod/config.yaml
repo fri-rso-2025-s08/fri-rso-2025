@@ -24,5 +24,7 @@ tenants:
   testing123:
     manager_postgres_password:
       _env: VT_PROD_MANAGER_POSTGRES_PASSWORD
-    nats_token:
-      _env: VT_PROD_NATS_TOKEN
+
+  testing456:
+    manager_postgres_password:
+      _env: VT_PROD_MANAGER_POSTGRES_PASSWORD
