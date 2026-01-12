@@ -9,3 +9,4 @@ README.md
 node_modules
 build
 **/.env
+latest_uploaded_tag

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi_problem.handler import add_exception_handler
 
 from vehicle_manager import crud, health
@@ -97,4 +97,31 @@ def make_app(*, settings: Settings | None = None) -> FastAPI:
 
             yield
 
-    return FastAPI(lifespan=lifespan)
+    app = FastAPI(lifespan=lifespan)
+
+    @app.middleware("http")
+    async def fuck(request: Request, call_next):
+        if (
+            "authorization" not in request.headers
+            and "x-fucking-ugly-hack" in request.headers
+        ):
+            scope_headers = dict(request.scope["headers"])
+            scope_headers[b"authorization"] = request.headers[
+                "x-fucking-ugly-hack"
+            ].encode()
+            request.scope["headers"] = list(scope_headers.items())
+
+        return await call_next(request)
+
+    # @app.middleware("http")
+    # async def log_incoming_headers(request: Request, call_next):
+    #     print(f"Method: {request.method} | URL: {request.url}")
+    #     print("--- HEADERS START ---")
+    #     for name, value in request.headers.items():
+    #         print(f"{name}: {value}")
+    #     print("--- HEADERS END ---")
+
+    #     response = await call_next(request)
+    #     return response
+
+    return app

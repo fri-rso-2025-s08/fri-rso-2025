@@ -1,0 +1,24 @@
+image:
+  name: my-registry/vehicle-manager:latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+ingress:
+  enabled: true
+  annotations:
+    cert-manager.io/cluster-issuer: "something"
+  className: "nginx"
+  host: api.example.com
+  tls:
+    enabled: true
+    secretName: vehicle-manager-tls
+
+env:
+  DATABASE_URL: "postgresql+asyncpg://app_user:redacted@host:5432/app_db"
+  TENANT_ID: "testing123"
+  OAUTH_ISSUER_URL: "redacted"
+  OAUTH_JWKS_URL: "redacted"
+  OAUTH_CLIENT_ID: "redacted"
+  NATS_URL: "nats://host:4222"
+  SUBJECT_BASE: "vt"

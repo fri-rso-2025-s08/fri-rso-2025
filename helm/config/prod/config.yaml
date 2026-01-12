@@ -1,10 +1,28 @@
 namespace_prefix: vt
-load_balancer_dns_label:
-  _env: VT_META_LOAD_BALANCER_DNS_LABEL
-authentik_host:
-  _env: VT_META_AUTHENTIK_HOST
-authentik_secret:
-  _env: VT_META_AUTHENTIK_SECRET
-authentik_postgres_password:
-  _env: VT_META_AUTHENTIK_POSTGRES_PASSWORD
+load_balancer_dns_label: pp9z40v8zu2wo8pm4eyp
 letsencrypt_mode: prod
+
+authentik_host: sso.rso.unseriousbusiness.org
+authentik_secret:
+  _env: VT_PROD_AUTHENTIK_SECRET
+authentik_postgres_password:
+  _env: VT_PROD_AUTHENTIK_POSTGRES_PASSWORD
+
+oauth_issuer_url: https://sso.rso.unseriousbusiness.org/application/o/vehicle-track/
+oauth_jwks_url: https://sso.rso.unseriousbusiness.org/application/o/vehicle-track/jwks/
+oauth_client_id: fCulratrtdBv2e13Z2ow9twFl9atElBNICgO4yUY
+oauth_client_secret:
+  _env: VT_PROD_OAUTH_CLIENT_SECRET
+
+api_host: api.rso.unseriousbusiness.org
+frontend_host: app.rso.unseriousbusiness.org
+
+frontend_redis_password:
+  _env: VT_PROD_FRONTEND_REDIS_PASSWORD
+
+tenants:
+  testing123:
+    manager_postgres_password:
+      _env: VT_PROD_MANAGER_POSTGRES_PASSWORD
+    nats_token:
+      _env: VT_PROD_NATS_TOKEN

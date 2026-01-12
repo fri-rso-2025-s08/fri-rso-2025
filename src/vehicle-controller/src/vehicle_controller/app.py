@@ -6,6 +6,7 @@ from typing import Protocol
 from fastapi import FastAPI
 from fastapi_problem.handler import add_exception_handler
 
+from vehicle_controller import health
 from vehicle_controller.errors import eh
 from vehicle_controller.nats import NATS
 from vehicle_controller.settings import Settings
@@ -48,6 +49,8 @@ def make_app_fn[T: Settings](
                 app.state.settings = settings
                 app.state.nc = nc
                 add_exception_handler(app, eh)
+
+                app.include_router(health.router, prefix="/health")
 
                 async with inner_lifespan(app):
                     yield

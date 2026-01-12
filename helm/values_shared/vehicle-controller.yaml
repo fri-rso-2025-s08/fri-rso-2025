@@ -1,0 +1,11 @@
+image:
+  name: null
+
+sharedEnv:
+  NATS_URL: null
+  SUBJECT_BASE: vt
+
+coordinator:
+  env:
+    HEARTBEAT_INTERVAL: null
+    HEARTBEAT_MISSED_LIMIT: null

@@ -1,0 +1,14 @@
+image:
+  name: null
+
+ingress:
+  enabled: false
+
+env:
+  DATABASE_URL: null
+  TENANT_ID: null
+  OAUTH_ISSUER_URL: null
+  OAUTH_JWKS_URL: null
+  OAUTH_CLIENT_ID: null
+  NATS_URL: null
+  SUBJECT_BASE: vt

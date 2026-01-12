@@ -1,0 +1,12 @@
+annotations:
+  cert-manager.io/cluster-issuer: null
+host: null
+tls:
+  enabled: true
+  secretName: vehicle-manager-tls
+tenants:
+  - id: null
+    prefix: /api/vehicle_manager/
+    targetNamespace: null
+    targetService: null
+    targetPort: 80

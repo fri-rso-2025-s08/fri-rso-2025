@@ -42,7 +42,7 @@ async function startAuthFlow(event: RequestEvent) {
 }
 
 export const handle = async ({ event, resolve }) => {
-    if (event.url.pathname === "/auth/callback") {
+    if (event.url.pathname === "/auth/callback" || event.url.pathname.startsWith("/health")) {
         return resolve(event);
     }
 

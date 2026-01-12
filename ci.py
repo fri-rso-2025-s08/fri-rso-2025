@@ -5,8 +5,10 @@
 # pyright: strict
 
 
+import operator
 import os
 import subprocess
+import uuid
 from argparse import ArgumentParser
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Sequence
@@ -17,6 +19,7 @@ from functools import cache, partial
 from graphlib import TopologicalSorter
 from itertools import chain
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 
 def cmd(*args: str):
@@ -54,19 +57,19 @@ class Task:
     name: str
     fn: Callable[[], None] | None = None
     after: Collection[str] = field(default=(), kw_only=True)
-    wants: Collection[str] = field(default=(), kw_only=True)
+    triggered_by: Collection[str] = field(default=(), kw_only=True)
     requires: Collection[str] = field(default=(), kw_only=True)
     autorun: bool = field(default=False, kw_only=True)
 
 
 def build_task_lists(
     tasks: Iterable[Task],
-) -> Iterable[Sequence[tuple[str, Callable[[], None] | None]]]:
+) -> Iterable[Sequence[tuple[str, Task]]]:
     g_full = {v.name: v for v in tasks}
     g_inv = defaultdict[str, set[str]](set)
 
     for k, v in g_full.items():
-        for k_u in v.wants:
+        for k_u in v.triggered_by:
             g_inv[k_u].add(k)
         for k_u in v.requires:
             g_inv[k_u].add(k)
@@ -99,14 +102,14 @@ def build_task_lists(
 
     ts = TopologicalSorter(
         {
-            k: {k_u for k_u in chain(v.after, v.wants, v.requires)}
+            k: {k_u for k_u in chain(v.after, v.triggered_by, v.requires)}
             for k, v in g_full.items()
         }
     )
     ts.prepare()
     while ts.is_active():
         ready = ts.get_ready()
-        to_yield = [(k, g_full[k].fn) for k in ready if k in to_run]
+        to_yield = [(k, g_full[k]) for k in ready if k in to_run]
         if to_yield:
             yield to_yield
         ts.done(*ready)
@@ -138,30 +141,32 @@ def get_docker_cmd() -> str:
     return "docker"
 
 
-def task_build_and_push(env: str, p: Path):
+def task_build(p: Path, iidcallback: Callable[[str], None]):
+    docker = get_docker_cmd()
+    with chdir(p):
+        with NamedTemporaryFile() as f:
+            cmd(docker, "build", "--iidfile", f.name, ".")
+            iidcallback(f.readline().decode("utf-8").strip())
+
+
+def get_current_registry():
+    return Path("current_registry").read_text().strip()
+
+
+def task_push(p: Path, getiid: Callable[[], str], env: str):
     docker = get_docker_cmd()
     registry = Path("current_registry").read_text().strip()
-    tag_base = f"{registry}/{p.name}"
-    tag = f"{tag_base}:latest"
+    tag = str(uuid.uuid4())
     with chdir(p):
-        cmd(docker, "build", "-t", tag, ".")
-        cmd(docker, "push", tag)
-        sha256 = (
-            cmd_stdout_str(docker, "inspect", "--format={{index .RepoDigests 0}}", tag)
-            .strip()
-            .split("@")[-1]
-            .removeprefix("sha256:")
-        )
-    (p / "latest_tag").write_text(f"{tag_base}:{sha256}\n")
+        cmd(docker, "push", getiid(), f"{registry}/{p.name}:{tag}")
+    p_tag_dir = p / "latest_uploaded_tag"
+    p_tag_dir.mkdir(exist_ok=True)
+    (p_tag_dir / env).write_text(tag)
 
 
-def task_maybe_commit():
-    try:
-        cmd("git", "diff", "--cached", "--quiet")
-    except Exception:
-        return
-    cmd("git", "add", "src/*/latest_tag")
-    cmd("git", "commit", "-m", "[automatic] update image tags")
+def task_maybe_commit(env: str):
+    cmd("git", "add", f"src/*/latest_uploaded_tag/{env}")
+    cmd("git", "commit", "-m", "[automated] update image tags")
 
 
 def task_helm(env: str):
@@ -173,6 +178,8 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("-d", "--dry-run", action="store_true")
     parser.add_argument("-e", "--env")
+    parser.add_argument("-c", "--commit", action="store_true")
+    parser.add_argument("-f", "--filter-task", action="append")
     parser.add_argument("diff_from")
     parsed = parser.parse_args()
 
@@ -180,17 +187,20 @@ def main():
 
     for tasks in build_task_lists(
         yield_tasks(
-            set(get_diff_fnames(parsed.diff_from)),
+            diff_fnames=set(get_diff_fnames(parsed.diff_from)),
             env=parsed.env,
+            should_commit=parsed.commit,
         )
     ):
-        for k, fn in tasks:
-            if fn is None:
+        for k, task in tasks:
+            if parsed.filter_task and k not in parsed.filter_task:
+                continue
+            if task.fn is None:
                 print(f"### Skipping task: {k} ###")
             else:
                 print(f"### Running task: {k} ###")
                 if not parsed.dry_run:
-                    fn()
+                    task.fn()
 
 
 ##################
@@ -200,7 +210,12 @@ def main():
 ##################
 
 
-def yield_tasks(diff_fnames: Collection[str], *, env: str | None) -> Iterable[Task]:
+def yield_tasks(
+    *,
+    diff_fnames: Collection[str],
+    env: str | None,
+    should_commit: bool,
+) -> Iterable[Task]:
     fnm = cache(fnmatch)
 
     @cache
@@ -217,7 +232,7 @@ def yield_tasks(diff_fnames: Collection[str], *, env: str | None) -> Iterable[Ta
     def with_env(fn: Callable[[str], None]):
         return None if env is None or env == "" else partial(fn, env)
 
-    yield Task("terraform_init", with_env(task_terraform_init))
+    yield Task("terraform_init", with_env(task_terraform_init), after=["target_test"])
     yield Task(
         "terraform_apply",
         with_env(task_terraform_apply),
@@ -231,33 +246,43 @@ def yield_tasks(diff_fnames: Collection[str], *, env: str | None) -> Iterable[Ta
         requires=["terraform_init"],
     )
 
-    build_tasks: list[str] = []
+    iidmap: dict[str, str] = {}
+    test_tasks: list[str] = []
+    push_tasks: list[str] = []
 
     for p in Path("src").glob("*/"):
         yield Task(
-            f"src_{p.name}_test",
-            lambda p=p: task_test(p),
-            after=["terraform_login"],
+            k_test := f"src_{p.name}_test",
+            partial(task_test, p),
             autorun=any_globs(f"src/{p.name}/*"),
+        )
+        test_tasks.append(k_test)
+        yield Task(
+            k_build := f"src_{p.name}_build",
+            partial(task_build, p, partial(operator.setitem, iidmap, p.name)),
+            requires=[k_test],
         )
         yield Task(
-            f"src_{p.name}_build_and_push",
-            with_env(lambda e, p=p: task_build_and_push(e, p)),
-            after=[f"src_{p.name}_test"],
-            autorun=any_globs(f"src/{p.name}/*"),
+            k_push := f"src_{p.name}_push",
+            with_env(partial(task_push, p, partial(operator.getitem, iidmap, p.name))),
+            requires=[k_build, "terraform_login"],
         )
-        build_tasks.append(f"src_{p.name}_build_and_push")
+        push_tasks.append(k_push)
+
+    yield Task("target_test", after=test_tasks)
 
     yield Task(
         "maybe_commit",
-        None,
-        wants=build_tasks,
+        with_env(task_maybe_commit) if should_commit else None,
+        triggered_by=push_tasks,
     )
 
     yield Task(
         "helm_release",
         with_env(task_helm),
-        requires=["terraform_login", "maybe_commit"],
+        after=["maybe_commit"],
+        triggered_by=push_tasks,
+        requires=["terraform_login"],
         autorun=any_globs("helm/*"),
     )
 

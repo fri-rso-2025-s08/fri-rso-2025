@@ -1,0 +1,20 @@
+annotations:
+  cert-manager.io/cluster-issuer: null
+  nginx.ingress.kubernetes.io/enable-cors: "true"
+  nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
+  nginx.ingress.kubernetes.io/auth-response-headers: "Authorization"
+host: api.example.com
+tls:
+  enabled: true
+  secretName: api-secret
+tenants:
+  - id: tenant-a
+    prefix: /api/
+    targetNamespace: tenant-a
+    targetService: tenant-a-service
+    targetPort: 80
+  - id: tenant-b
+    prefix: /api/
+    targetNamespace: tenant-b
+    targetService: tenant-b-service
+    targetPort: 80

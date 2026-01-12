@@ -1,0 +1,16 @@
+image:
+  name: my-registry/vehicle-controller:latest
+  pullPolicy: IfNotPresent
+
+sharedEnv:
+  NATS_URL: "nats://host:4222"
+  SUBJECT_BASE: "vt"
+
+coordinator:
+  env:
+    HEARTBEAT_INTERVAL: "1"
+    HEARTBEAT_MISSED_LIMIT: "2"
+
+worker:
+  replicaCount: 1
+  env: {}

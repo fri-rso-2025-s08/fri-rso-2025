@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: nginx
+  {{- if .Values.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.host }}
+      secretName: {{ .Values.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.host }}
+      http:
+        paths:
+        {{- range .Values.tenants }}
+          - path: {{ .prefix }}{{ .id }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Release.Name }}-{{ .id }}
+                port:
+                  number: {{ .targetPort }}
+        {{- end }}

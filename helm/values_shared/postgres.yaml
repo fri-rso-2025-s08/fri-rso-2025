@@ -1,0 +1,10 @@
+auth:
+  database: vehicletrack
+  username: vehicletrack
+  password: null
+  postgresPassword: null
+
+primary:
+  persistence:
+    enabled: true
+    size: 512Mi

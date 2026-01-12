@@ -1,0 +1,12 @@
+{{- range .Values.tenants }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ .id }}
+spec:
+  type: ExternalName
+  externalName: {{ .targetService }}.{{ .targetNamespace }}.svc.cluster.local
+  ports:
+    - port: {{ .targetPort }}
+{{- end }}

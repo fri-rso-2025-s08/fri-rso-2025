@@ -6,7 +6,7 @@ export const fallback = async ({ request, params, url, locals, fetch }) => {
     );
     target.search = url.search;
 
-    console.log(`[PROXY TARGET] ${target.toString()}`); // TRACE 1: Verify URL/IDs
+    // console.log(`[PROXY TARGET] ${target.toString()}`); // TRACE 1: Verify URL/IDs
 
     const headers = new Headers(request.headers);
     headers.delete("host");
@@ -14,6 +14,7 @@ export const fallback = async ({ request, params, url, locals, fetch }) => {
     headers.delete("content-encoding");
     headers.delete("content-length");
     headers.set("authorization", `Bearer ${locals.user.accessToken}`);
+    headers.set("X-Fucking-Ugly-Hack", `Bearer ${locals.user.accessToken}`);
 
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
     let bodyPayload = undefined;
@@ -23,9 +24,9 @@ export const fallback = async ({ request, params, url, locals, fetch }) => {
     if (hasBody) {
         try {
             bodyPayload = await request.text();
-            console.log(`[PROXY PAYLOAD]`, bodyPayload);
+            // console.log(`[PROXY PAYLOAD]`, bodyPayload);
         } catch (e) {
-            console.error(`[PROXY BODY ERROR] Could not read request body`, e);
+            // console.error(`[PROXY BODY ERROR] Could not read request body`, e);
             throw e;
         }
     }
@@ -41,7 +42,7 @@ export const fallback = async ({ request, params, url, locals, fetch }) => {
         // TRACE 3: Catch upstream errors
         if (!ret.ok) {
             const errText = await ret.text();
-            console.error(`[UPSTREAM ERROR] ${ret.status} from Backend:`, errText);
+            // console.error(`[UPSTREAM ERROR] ${ret.status} from Backend:`, errText);
 
             // Return the detailed error to the client instead of a generic 500
             return new Response(errText, {
@@ -52,7 +53,9 @@ export const fallback = async ({ request, params, url, locals, fetch }) => {
 
         return ret;
     } catch (e) {
-        console.error(`[FETCH FAILURE] Network/DNS error:`, e);
+        // console.error(`[FETCH FAILURE] Network/DNS error:`, e);
         return new Response(JSON.stringify({ error: (e as any).message }), { status: 500 });
     }
 };
+
+export const trailingSlash = "ignore";

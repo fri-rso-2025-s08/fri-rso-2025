@@ -1,0 +1,20 @@
+image:
+  name: null
+
+ingress:
+  enabled: true
+  annotations:
+    cert-manager.io/cluster-issuer: null
+  className: "nginx"
+  host: null
+  tls:
+    enabled: true
+    secretName: frontend-tls
+
+env:
+  REDIS_URL: null
+  OAUTH_ISSUER_URL: null
+  OAUTH_CLIENT_ID: null
+  OAUTH_CLIENT_SECRET: null
+  OAUTH_ORIGIN: null
+  BACKEND_URL: null

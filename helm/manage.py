@@ -99,7 +99,13 @@ class HelmRelease:
     values: HelmValuesArg
 
 
-def update_release(release: HelmRelease, ns_prefix: str, *, dry_run: bool = False):
+def update_release(
+    release: HelmRelease,
+    ns_prefix: str,
+    *,
+    dry_run: bool = False,
+    dry_run_server: bool = False,
+):
     print(f"Upgrading {ns_prefix}{release.ns}.{release.release} ({release.chart})")
 
     with with_helm_values(release.values) as (values_args, values_fds):
@@ -114,6 +120,8 @@ def update_release(release: HelmRelease, ns_prefix: str, *, dry_run: bool = Fals
             ns_prefix + release.ns,
             *values_args,
         ]
+        if dry_run_server:
+            args.append("--dry-run")
         if not dry_run:
             subprocess.check_call(
                 args,
@@ -141,9 +149,17 @@ def get_installed_releases(ns: str) -> list[str]:
     return cast(list[str], releases)
 
 
-def uninstall_release(ns: str, release: str, *, dry_run: bool = False):
+def uninstall_release(
+    ns: str,
+    release: str,
+    *,
+    dry_run: bool = False,
+    dry_run_server: bool = False,
+):
     print(f"Uninstalling {ns}.{release}")
     args = ["helm", "uninstall", "-n", ns, release]
+    if dry_run_server:
+        args.append("--dry-run")
     if not dry_run:
         subprocess.check_call(args)
 
@@ -159,6 +175,7 @@ def delete_namespace(ns: str, *, dry_run: bool = False):
 class Env:
     config: "EnvConfig"
     path: Path
+    name: str
 
 
 def load_env(env_name: str) -> Env:
@@ -167,7 +184,7 @@ def load_env(env_name: str) -> Env:
     with open(path / "config.yaml") as f:
         config = EnvConfig.model_validate(yaml.safe_load(f))
 
-    return Env(config, path)
+    return Env(config, path, env_name)
 
 
 def apply(
@@ -177,6 +194,7 @@ def apply(
     filter: Collection[str] = (),
     uninstall_dangling: bool,
     dry_run: bool = False,
+    dry_run_server: bool = False,
 ):
     desired_releases = defaultdict[str, dict[str, HelmRelease]](dict)
     releases_list = list(releases)
@@ -190,7 +208,9 @@ def apply(
             fullrelease = f"{ns_prefix}{release.ns}.{release.release}"
             if not any(pat in fullrelease for pat in filter):
                 continue
-        update_release(release, ns_prefix, dry_run=dry_run)
+        update_release(
+            release, ns_prefix, dry_run=dry_run, dry_run_server=dry_run_server
+        )
 
     if not uninstall_dangling:
         return
@@ -221,12 +241,14 @@ def main_apply(parsed: Namespace):
         filter=parsed.filter,
         uninstall_dangling=parsed.uninstall_dangling,
         dry_run=parsed.dry_run,
+        dry_run_server=parsed.dry_run_server,
     )
 
 
 def main():
     parser = ArgumentParser()
     parser.add_argument("-d", "--dry-run", action="store_true")
+    parser.add_argument("-D", "--dry-run-server", action="store_true")
     parser.add_argument("-e", "--env", required=True)
     subparsers = parser.add_subparsers(required=True)
     parser_apply = subparsers.add_parser("apply")
@@ -237,6 +259,22 @@ def main():
 
     os.chdir(Path(__file__).parent)
     parsed._fn(parsed)
+
+
+def get_current_registry():
+    return Path("../current_registry").read_text().strip()
+
+
+def get_image_tag(env: Env, service_name: str):
+    return (
+        (Path("../src") / service_name / "latest_uploaded_tag" / env.name)
+        .read_text()
+        .strip()
+    )
+
+
+def get_image_name(env: Env, service_name: str):
+    return f"{get_current_registry()}/{service_name}:{get_image_tag(env, service_name)}"
 
 
 def maybe_read_env(value: Any) -> Any:
@@ -256,13 +294,37 @@ type MaybeEnvString = Annotated[str, MaybeEnvValidator]
 ##################
 
 
+class EnvConfigTenant(BaseModel):
+    manager_postgres_password: MaybeEnvString
+    manager_postgres_admin_password: MaybeEnvString | None = None
+
+    nats_token: MaybeEnvString
+
+    controller_heartbeat_interval: float = 1
+    controller_heartbeat_missed_limit: int = 2
+
+
 class EnvConfig(BaseModel):
     namespace_prefix: MaybeEnvString
     load_balancer_dns_label: MaybeEnvString | None = None
+    letsencrypt_mode: Annotated[Literal["staging", "prod"], MaybeEnvString]
+
     authentik_host: MaybeEnvString
     authentik_secret: MaybeEnvString
     authentik_postgres_password: MaybeEnvString
-    letsencrypt_mode: Annotated[Literal["staging", "prod"], MaybeEnvString]
+
+    # Fill after creating your application in authentik
+    oauth_issuer_url: MaybeEnvString
+    oauth_jwks_url: MaybeEnvString
+    oauth_client_id: MaybeEnvString
+    oauth_client_secret: MaybeEnvString
+
+    api_host: MaybeEnvString
+    frontend_host: MaybeEnvString
+
+    frontend_redis_password: MaybeEnvString
+
+    tenants: dict[str, EnvConfigTenant]
 
     model_config = {"extra": "forbid"}
 
@@ -300,6 +362,10 @@ def yield_releases(env: Env) -> Iterable[HelmRelease]:
 
     yield HelmRelease("global", "charts/cert-manager-issuer", "letsencrypt", [])
 
+    ingress_annotations = {
+        "cert-manager.io/cluster-issuer": f"{c.namespace_prefix}-global-letsencrypt-letsencrypt-{c.letsencrypt_mode}"
+    }
+
     yield HelmRelease(
         "global",
         "charts/authentik.tgz",
@@ -314,9 +380,7 @@ def yield_releases(env: Env) -> Iterable[HelmRelease]:
                 "postgresql": {"auth": {"password": c.authentik_postgres_password}},
                 "server": {
                     "ingress": {
-                        "annotations": {
-                            "cert-manager.io/cluster-issuer": f"{c.namespace_prefix}-global-letsencrypt-letsencrypt-{c.letsencrypt_mode}"
-                        },
+                        "annotations": ingress_annotations,
                         "hosts": [c.authentik_host],
                         "tls": [
                             {
@@ -329,6 +393,129 @@ def yield_releases(env: Env) -> Iterable[HelmRelease]:
             },
         ],
     )
+
+    yield HelmRelease(
+        "global",
+        "charts/vehicle-manager-ingress",
+        "vehicle-manager-proxy",
+        [
+            p_shared / "vehicle-manager-ingress.yaml",
+            {
+                "annotations": ingress_annotations,
+                "host": c.api_host,
+                "tenants": [
+                    {
+                        "id": k,
+                        "prefix": "/api/vehicle_manager/",
+                        "targetNamespace": f"{c.namespace_prefix}-tenant-{k}",
+                        "targetService": "vehicle-manager",
+                        "targetPort": 80,
+                    }
+                    for k in c.tenants
+                ],
+            },
+        ],
+    )
+
+    yield HelmRelease(
+        "frontend",
+        "charts/redis.tgz",
+        "redis",
+        [
+            p_shared / "redis.yaml",
+            {"auth": {"password": c.frontend_redis_password}},
+        ],
+    )
+
+    yield HelmRelease(
+        "frontend",
+        "../src/frontend/chart",
+        "frontend",
+        [
+            p_shared / "frontend.yaml",
+            {
+                "image": {"name": get_image_name(env, "frontend")},
+                "ingress": {
+                    "annotations": ingress_annotations,
+                    "host": c.frontend_host,
+                },
+                "env": {
+                    "REDIS_URL": f"redis://:{c.frontend_redis_password}@redis-master:6379",
+                    "OAUTH_ISSUER_URL": c.oauth_issuer_url,
+                    "OAUTH_CLIENT_ID": c.oauth_client_id,
+                    "OAUTH_CLIENT_SECRET": c.oauth_client_secret,
+                    "OAUTH_ORIGIN": f"https://{c.frontend_host}",
+                    "BACKEND_URL": f"https://{c.api_host}",
+                },
+            },
+        ],
+    )
+
+    for k, tenant in c.tenants.items():
+        yield HelmRelease(
+            f"tenant-{k}",
+            "charts/postgres.tgz",
+            "postgres",
+            [
+                p_shared / "postgres.yaml",
+                {
+                    "auth": {
+                        "password": tenant.manager_postgres_password,
+                        "postgresPassword": tenant.manager_postgres_admin_password,
+                    }
+                },
+            ],
+        )
+
+        yield HelmRelease(
+            f"tenant-{k}",
+            "charts/nats.tgz",
+            "nats",
+            [p_shared / "nats.yaml"],
+        )
+
+        yield HelmRelease(
+            f"tenant-{k}",
+            "../src/vehicle-manager/chart",
+            "vehicle-manager",
+            [
+                p_shared / "vehicle-manager.yaml",
+                {
+                    "image": {"name": get_image_name(env, "vehicle-manager")},
+                    "env": {
+                        "DATABASE_URL": f"postgresql+asyncpg://vehicletrack:{tenant.manager_postgres_password}@postgres-postgresql:5432/vehicletrack",
+                        "TENANT_ID": k,
+                        "OAUTH_ISSUER_URL": c.oauth_issuer_url,
+                        "OAUTH_JWKS_URL": c.oauth_jwks_url,
+                        "OAUTH_CLIENT_ID": c.oauth_client_id,
+                        "NATS_URL": f"nats://{tenant.nats_token}@nats:4222",
+                    },
+                },
+            ],
+        )
+
+        yield HelmRelease(
+            f"tenant-{k}",
+            "../src/vehicle-controller/chart",
+            "vehicle-controller",
+            [
+                p_shared / "vehicle-controller.yaml",
+                {
+                    "image": {"name": get_image_name(env, "vehicle-controller")},
+                    "sharedEnv": {"NATS_URL": f"nats://{tenant.nats_token}@nats:4222"},
+                    "coordinator": {
+                        "env": {
+                            "HEARTBEAT_INTERVAL": str(
+                                tenant.controller_heartbeat_interval
+                            ),
+                            "HEARTBEAT_MISSED_LIMIT": str(
+                                tenant.controller_heartbeat_missed_limit
+                            ),
+                        },
+                    },
+                },
+            ],
+        )
 
 
 if __name__ == "__main__":

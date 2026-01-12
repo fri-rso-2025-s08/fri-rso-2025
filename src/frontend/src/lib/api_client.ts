@@ -172,7 +172,7 @@ export class VehicleClient {
 
     // Vehicles
     async listVehicles(active: boolean = true) {
-        return this.request("GET", "/vehicles", z.array(UuidSchema), undefined, { active });
+        return this.request("GET", "/vehicles/", z.array(UuidSchema), undefined, { active });
     }
 
     async getVehicle(id: string) {
@@ -180,7 +180,7 @@ export class VehicleClient {
     }
 
     async createVehicle(payload: VehicleCreate) {
-        return this.request("POST", "/vehicles", VehicleReadSchema, payload);
+        return this.request("POST", "/vehicles/", VehicleReadSchema, payload);
     }
 
     async updateVehicle(id: string, payload: VehicleUpdate) {
@@ -193,7 +193,7 @@ export class VehicleClient {
 
     // Geofences
     async listGeofences(active: boolean = true) {
-        return this.request("GET", "/geofences", z.array(UuidSchema), undefined, { active });
+        return this.request("GET", "/geofences/", z.array(UuidSchema), undefined, { active });
     }
 
     async getGeofence(id: string) {
@@ -201,7 +201,7 @@ export class VehicleClient {
     }
 
     async createGeofence(payload: GeofenceCreate) {
-        return this.request("POST", "/geofences", GeofenceReadSchema, payload);
+        return this.request("POST", "/geofences/", GeofenceReadSchema, payload);
     }
 
     async updateGeofence(id: string, payload: GeofenceUpdate) {

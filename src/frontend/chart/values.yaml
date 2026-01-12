@@ -1,0 +1,23 @@
+image:
+  name: my-registry/frontend:latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+ingress:
+  enabled: true
+  annotations:
+    cert-manager.io/cluster-issuer: "something"
+  className: "nginx"
+  host: app.example.com
+  tls:
+    enabled: true
+    secretName: app-tls-cert
+
+env:
+  REDIS_URL: "redis://:password@host:6379"
+  OAUTH_ISSUER_URL: "https://sso.example.com"
+  OAUTH_CLIENT_ID: "redacted"
+  OAUTH_CLIENT_SECRET: "redacted"
+  OAUTH_ORIGIN: "https://app.example.com"
+  BACKEND_URL: "https://api.example.com"
