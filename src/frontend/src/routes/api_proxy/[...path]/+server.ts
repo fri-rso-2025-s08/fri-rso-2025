@@ -2,7 +2,7 @@ import { env } from "$env/dynamic/private";
 
 export const fallback = async ({ request, params, url, locals, fetch }) => {
     const target = new URL(
-        `${env.BACKEND_URL}/api/vehicle_manager/${locals.user.tenant_id}/${params.path}`
+        `${env.BACKEND_URL as any}/api/vehicle_manager/${locals.user.tenant_id}/${params.path}`
     );
     target.search = url.search;
 

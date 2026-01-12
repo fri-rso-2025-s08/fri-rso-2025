@@ -8,8 +8,8 @@ let redisCached:
 
 export async function getRedis() {
     if (redisCached == null) {
-        if (!env.REDIS_URL) throw new Error("REDIS_URL is not set");
-        const x = await createClient({ url: env.REDIS_URL }).connect();
+        if (!env.REDIS_URL as any) throw new Error("REDIS_URL is not set");
+        const x = await createClient({ url: env.REDIS_URL as any }).connect();
         redisCached = x;
     }
     return redisCached;
